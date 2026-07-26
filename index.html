@@ -138,8 +138,19 @@
     transition:transform .15s ease;}
   .toggle.on .toggle-dot{transform:translateX(18px);background:var(--green);}
   .user-actions{display:flex;gap:8px;align-items:center;}
+  .user-perms{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #1A2129;}
+  .user-perm-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .user-perm-label{font-size:12px;color:var(--muted);}
   .viewing-banner{background:var(--surface2);border:1px solid var(--gold);color:var(--gold);font-size:12px;
     padding:10px 14px;border-radius:10px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
+
+  /* ---- previsão / forecast tab ---- */
+  .rec-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;
+    margin-bottom:12px;display:flex;flex-direction:column;gap:8px;}
+  .rec-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .rec-desc{font-size:15px;font-weight:600;}
+  .rec-meta{font-size:11px;color:var(--dim);}
+  .rec-actions{display:flex;justify-content:space-between;align-items:center;margin-top:2px;}
 </style>
 </head>
 <body>
@@ -161,7 +172,8 @@
   <nav class="tabbar" id="tabbar" style="display:none;">
     <button class="tab-btn" data-tab="resumo"><span class="ic">◐</span><span class="tab-label">Resumo</span></button>
     <button class="tab-btn" data-tab="lancamentos"><span class="ic">≡</span><span class="tab-label">Lançamentos</span></button>
-    <button class="tab-btn" data-tab="emprestimos"><span class="ic">%</span><span class="tab-label">Empréstimos</span></button>
+    <button class="tab-btn" data-tab="previsao"><span class="ic">◈</span><span class="tab-label">Previsão</span></button>
+    <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic">%</span><span class="tab-label">Empréstimos</span></button>
     <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic">☺</span><span class="tab-label">Usuários</span></button>
   </nav>
 </div>
@@ -206,6 +218,9 @@ const monthsElapsed = (startISO, endDate) => {
 };
 const midnight = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const todayISO = () => new Date().toISOString().slice(0,10);
+const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate()+n); return r; };
+const addMonths = (d, n) => { const r = new Date(d); r.setMonth(r.getMonth()+n); return r; };
+const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const escapeHtml = s => (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function showError(msg){
   const el = document.getElementById('errorBanner');
@@ -216,6 +231,16 @@ function usernameToEmail(u){ return `${u.trim().toLowerCase()}@${EMAIL_DOMAIN}`;
 
 const CATS_EXPENSE = ['Moradia','Alimentação','Transporte','Saúde','Lazer','Contas','Empréstimo','Outros'];
 const CATS_INCOME = ['Salário','Freelance','Rendimentos','Empréstimo recebido','Outros'];
+
+// ---------- tipos de receita previsível ----------
+const TIPOS_RECEITA = {
+  frota:    { label: 'Frota de carros',       color: '#7FBFA6' },
+  pix:      { label: 'Venda parcelada (Pix)', color: '#C9A15A' },
+  salario:  { label: 'Salário',               color: '#8FB4D9' },
+  negocio:  { label: 'Negócios',               color: '#D9A8D9' },
+  outro:    { label: 'Outro',                 color: '#B8BEC7' },
+};
+const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 
 // ---------- loan helpers ----------
 function normalizeLoan(l){
@@ -250,18 +275,81 @@ function computeLoanAmounts(l, asOfDate){
   return { baseTotal, juros: baseTotal - l.principal, daysLate, lateFeeTotal, total: baseTotal + lateFeeTotal };
 }
 
+// ---------- recorrência / previsão helpers ----------
+function normalizeRecurrence(r){
+  return Object.assign({
+    tipo: 'outro', descricao: '', valor: 0, frequencia: 'semanal',
+    diaSemana: 1, diaMes: 1, dataInicio: todayISO(),
+    parcelasTotal: null, parcelasPagas: 0, ativo: true,
+  }, r);
+}
+// gera as próximas ocorrências de uma recorrência dentro de uma janela [hoje, hoje+diasJanela]
+function nextOccurrences(rec, diasJanela){
+  if(rec.ativo === false) return [];
+  const hoje = midnight(new Date());
+  const limite = addDays(hoje, diasJanela);
+  const inicio = midnight(new Date(rec.dataInicio+'T00:00:00'));
+  const out = [];
+
+  if(rec.frequencia === 'semanal'){
+    let cursor = new Date(hoje);
+    while(cursor.getDay() !== Number(rec.diaSemana)) cursor = addDays(cursor, 1);
+    if(cursor < inicio) cursor = new Date(inicio);
+    while(cursor <= limite){
+      if(cursor >= hoje) out.push({ date: toISO(cursor) });
+      cursor = addDays(cursor, 7);
+    }
+  }else if(rec.frequencia === 'mensal'){
+    let cursor = new Date(hoje.getFullYear(), hoje.getMonth(), Math.min(rec.diaMes, 28));
+    if(cursor < hoje) cursor = addMonths(cursor, 1);
+    if(cursor < inicio) cursor = new Date(inicio);
+    while(cursor <= limite){
+      if(cursor >= hoje) out.push({ date: toISO(cursor) });
+      cursor = addMonths(cursor, 1);
+    }
+  }else if(rec.frequencia === 'parcelas'){
+    const restantes = Math.max(0, (rec.parcelasTotal||0) - (rec.parcelasPagas||0));
+    let cursor = new Date(inicio);
+    cursor = addMonths(cursor, rec.parcelasPagas||0);
+    for(let i=0; i<restantes; i++){
+      if(cursor >= hoje && cursor <= limite) out.push({ date: toISO(cursor), parcelaNum: (rec.parcelasPagas||0)+i+1 });
+      cursor = addMonths(cursor, 1);
+    }
+  }
+  return out;
+}
+function buildForecast(recurrences, diasJanela){
+  const items = [];
+  recurrences.map(normalizeRecurrence).forEach(rec => {
+    nextOccurrences(rec, diasJanela).forEach(occ => {
+      items.push({
+        date: occ.date,
+        tipo: rec.tipo,
+        valor: rec.valor,
+        descricao: rec.descricao,
+        recId: rec.id,
+        parcelaNum: occ.parcelaNum,
+        parcelasTotal: rec.parcelasTotal,
+      });
+    });
+  });
+  items.sort((a,b)=> a.date < b.date ? -1 : 1);
+  return items;
+}
+
 // ---------- state ----------
 const state = {
-  data: { transactions: [], loans: [] },
+  data: { transactions: [], loans: [], recurrences: [] },
   tab: 'resumo',
   refMonth: new Date(),
-  currentUser: null,   // { uid, username, role }
+  currentUser: null,   // { uid, username, role, canLoans }
   viewingUid: null,    // qual usuário está sendo exibido (== currentUser.uid, exceto quando admin espia outro)
   viewingUsername: null,
   allUsers: [],         // só preenchido para admin
   unsubTx: null,
   unsubLoans: null,
   unsubUsers: null,
+  unsubRec: null,
 };
 
 // =====================================================================
@@ -336,13 +424,17 @@ auth.onAuthStateChanged(async (user) => {
       renderDisabledScreen(profile.username || user.email);
       return;
     }
-    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user' };
+    const isAdmin = (profile.role || 'user') === 'admin';
+    const canLoans = isAdmin ? true : profile.canLoans === true;
+    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user', canLoans };
     state.viewingUid = user.uid;
     state.viewingUsername = profile.username;
-    document.getElementById('tabUsuarios').style.display = state.currentUser.role === 'admin' ? '' : 'none';
+    document.getElementById('tabUsuarios').style.display = isAdmin ? '' : 'none';
+    document.getElementById('tabEmprestimos').style.display = canLoans ? '' : 'none';
+    if(!canLoans && state.tab === 'emprestimos') state.tab = 'resumo';
     showApp(true);
     attachDataListeners(state.viewingUid);
-    if(state.currentUser.role === 'admin') attachUsersListener();
+    if(isAdmin) attachUsersListener();
     render();
   }catch(e){
     showError('Erro ao carregar conta: ' + e.message);
@@ -353,12 +445,14 @@ function detachListeners(){
   if(state.unsubTx) state.unsubTx();
   if(state.unsubLoans) state.unsubLoans();
   if(state.unsubUsers) state.unsubUsers();
-  state.unsubTx = state.unsubLoans = state.unsubUsers = null;
+  if(state.unsubRec) state.unsubRec();
+  state.unsubTx = state.unsubLoans = state.unsubUsers = state.unsubRec = null;
 }
 
 function attachDataListeners(uid){
   if(state.unsubTx) state.unsubTx();
   if(state.unsubLoans) state.unsubLoans();
+  if(state.unsubRec) state.unsubRec();
   state.unsubTx = db.collection('users').doc(uid).collection('transactions')
     .onSnapshot(qs => {
       state.data.transactions = qs.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -369,6 +463,11 @@ function attachDataListeners(uid){
       state.data.loans = qs.docs.map(d => ({ id: d.id, ...d.data() }));
       render();
     }, err => showError('Erro ao carregar empréstimos: '+err.message));
+  state.unsubRec = db.collection('users').doc(uid).collection('recurrences')
+    .onSnapshot(qs => {
+      state.data.recurrences = qs.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, err => showError('Erro ao carregar previsões: '+err.message));
 }
 
 function attachUsersListener(){
@@ -396,6 +495,9 @@ function deleteTransaction(id){ return dataCol('transactions').doc(id).delete().
 function addLoan(loan){ return dataCol('loans').add(loan).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateLoan(id, patch){ return dataCol('loans').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteLoan(id){ return dataCol('loans').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function addRecurrence(rec){ return dataCol('recurrences').add(rec).catch(e=>showError('Erro ao salvar: '+e.message)); }
+function updateRecurrence(id, patch){ return dataCol('recurrences').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
+function deleteRecurrence(id){ return dataCol('recurrences').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
 
 // =====================================================================
 // RENDER ROOT
@@ -410,6 +512,7 @@ function render(){
     : '';
   if(state.tab === 'resumo') mainEl.innerHTML = banner + renderResumo();
   else if(state.tab === 'lancamentos') mainEl.innerHTML = banner + renderLancamentos();
+  else if(state.tab === 'previsao') mainEl.innerHTML = banner + renderPrevisao();
   else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + renderEmprestimos();
   else mainEl.innerHTML = renderUsuarios();
   attachMainListeners();
@@ -511,6 +614,80 @@ function renderLancamentos(){
   `;
 }
 
+// ---------- Previsão (dashboard de previsibilidade) ----------
+const FORECAST_WINDOW_DAYS = 30;
+function renderPrevisao(){
+  const recs = state.data.recurrences.map(normalizeRecurrence);
+  const forecast = buildForecast(recs, FORECAST_WINDOW_DAYS);
+
+  const totalPrevisto = forecast.reduce((s,i)=>s+i.valor,0);
+  const byTipo = {};
+  forecast.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
+  const maxTipo = Math.max(1, ...Object.values(byTipo));
+  const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
+
+  const ativos = recs.filter(r=>r.ativo!==false);
+  const inativos = recs.filter(r=>r.ativo===false);
+
+  return `
+    <div class="balance-card">
+      <div class="balance-eyebrow">previsto para os próximos ${FORECAST_WINDOW_DAYS} dias</div>
+      <div class="balance-number" style="color:var(--gold)">${fmt(totalPrevisto)}</div>
+    </div>
+
+    <div class="section-title">por tipo de entrada</div>
+    ${tipoEntries.length===0 ? '<div class="empty-note">Nenhuma entrada prevista. Toque em + para cadastrar uma fonte de renda recorrente.</div>' : `
+    <div class="cat-list">
+      ${tipoEntries.map(([tipo,val])=>`
+        <div>
+          <div class="cat-row-top"><span class="cat-name">${TIPOS_RECEITA[tipo].label}</span><span class="cat-value">${fmt(val)}</span></div>
+          <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${(val/maxTipo)*100}%;background:${TIPOS_RECEITA[tipo].color}"></div></div>
+        </div>
+      `).join('')}
+    </div>`}
+
+    <div class="section-title">linha do tempo</div>
+    ${forecast.length===0 ? '<div class="empty-note">Nada previsto para o período.</div>' : `
+    <div class="tx-list" style="margin-bottom:28px;">
+      ${forecast.map(i=>`
+        <div class="tx-row">
+          <div class="tx-dot" style="background:${TIPOS_RECEITA[i.tipo].color}"></div>
+          <div class="tx-info">
+            <div class="tx-desc">${escapeHtml(i.descricao) || TIPOS_RECEITA[i.tipo].label}${i.parcelaNum ? ` (parcela ${i.parcelaNum}/${i.parcelasTotal})` : ''}</div>
+            <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+          </div>
+          <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+        </div>
+      `).join('')}
+    </div>`}
+
+    <div class="section-title">fontes cadastradas</div>
+    ${ativos.length===0 && inativos.length===0 ? '<div class="empty-note">Nenhuma fonte cadastrada ainda.</div>' : ''}
+    ${ativos.map(recCardHtml).join('')}
+    ${inativos.length>0 ? inativos.map(recCardHtml).join('') : ''}
+  `;
+}
+function recCardHtml(r){
+  const freqLabel = r.frequencia === 'semanal' ? `Toda ${DIAS_SEMANA[r.diaSemana].toLowerCase()}`
+    : r.frequencia === 'mensal' ? `Todo dia ${r.diaMes}`
+    : `Parcelado (${r.parcelasPagas||0}/${r.parcelasTotal} pagas)`;
+  return `
+    <div class="rec-card" style="opacity:${r.ativo===false?0.5:1}">
+      <div class="rec-card-top">
+        <div>
+          <div class="rec-desc">${escapeHtml(r.descricao) || TIPOS_RECEITA[r.tipo].label}</div>
+          <div class="rec-meta">${TIPOS_RECEITA[r.tipo].label} · ${freqLabel} · ${fmt(r.valor)}</div>
+        </div>
+        <div class="toggle ${r.ativo!==false?'on':''}" data-toggle-rec="${r.id}" data-current="${r.ativo!==false}"><div class="toggle-dot"></div></div>
+      </div>
+      <div class="rec-actions">
+        <span></span>
+        <button class="trash-btn-loan" data-delete-rec="${r.id}">✕ excluir</button>
+      </div>
+    </div>
+  `;
+}
+
 // ---------- Empréstimos ----------
 function loanCardHtml(l){
   const isPaid = l.status === 'paid';
@@ -549,18 +726,29 @@ function renderUsuarios(){
   const users = state.allUsers.slice().sort((a,b)=> (a.username||'').localeCompare(b.username||''));
   return `
     <div class="section-title">contas com acesso</div>
-    ${users.length===0 ? '<div class="empty-note">Carregando usuários...</div>' : users.map(u=>`
-      <div class="user-card">
-        <div>
-          <div class="user-name">${escapeHtml(u.username||'(sem nome)')}</div>
-          <div class="user-role">${u.role==='admin'?'administrador':'usuário'}</div>
+    ${users.length===0 ? '<div class="empty-note">Carregando usuários...</div>' : users.map(u=>{
+      const isAdminUser = u.role === 'admin';
+      return `
+      <div class="user-card" style="flex-direction:column;align-items:stretch;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div>
+            <div class="user-name">${escapeHtml(u.username||'(sem nome)')}</div>
+            <div class="user-role">${isAdminUser?'administrador':'usuário'}</div>
+          </div>
+          <div class="user-actions">
+            ${u.uid !== state.currentUser.uid ? `<button class="small-btn" data-view-user="${u.uid}" data-view-username="${escapeHtml(u.username||'')}">ver ledger</button>` : ''}
+            <div class="toggle ${u.active!==false ? 'on':''}" data-toggle-active="${u.uid}" data-current="${u.active!==false}"><div class="toggle-dot"></div></div>
+          </div>
         </div>
-        <div class="user-actions">
-          ${u.uid !== state.currentUser.uid ? `<button class="small-btn" data-view-user="${u.uid}" data-view-username="${escapeHtml(u.username||'')}">ver ledger</button>` : ''}
-          <div class="toggle ${u.active!==false ? 'on':''}" data-toggle-active="${u.uid}" data-current="${u.active!==false}"><div class="toggle-dot"></div></div>
-        </div>
+        ${isAdminUser ? '' : `
+        <div class="user-perms">
+          <div class="user-perm-row">
+            <span class="user-perm-label">Acesso a Empréstimos</span>
+            <div class="toggle ${u.canLoans===true ? 'on':''}" data-toggle-loans="${u.uid}" data-current="${u.canLoans===true}"><div class="toggle-dot"></div></div>
+          </div>
+        </div>`}
       </div>
-    `).join('')}
+    `;}).join('')}
     <button class="save-btn" id="openAddUser" style="margin-top:10px;">+ Adicionar usuário</button>
   `;
 }
@@ -585,6 +773,18 @@ function attachMainListeners(){
     btn.onclick = () => deleteLoan(btn.getAttribute('data-delete-loan'));
   });
 
+  // previsão
+  document.querySelectorAll('[data-delete-rec]').forEach(btn=>{
+    btn.onclick = () => deleteRecurrence(btn.getAttribute('data-delete-rec'));
+  });
+  document.querySelectorAll('[data-toggle-rec]').forEach(el=>{
+    el.onclick = () => {
+      const id = el.getAttribute('data-toggle-rec');
+      const current = el.getAttribute('data-current') === 'true';
+      updateRecurrence(id, { ativo: !current });
+    };
+  });
+
   // admin: usuários
   document.querySelectorAll('[data-view-user]').forEach(btn=>{
     btn.onclick = () => switchViewing(btn.getAttribute('data-view-user'), btn.getAttribute('data-view-username'));
@@ -595,6 +795,14 @@ function attachMainListeners(){
       const current = el.getAttribute('data-current') === 'true';
       db.collection('users').doc(uid).update({ active: !current })
         .catch(e=>showError('Erro ao atualizar acesso: '+e.message));
+    };
+  });
+  document.querySelectorAll('[data-toggle-loans]').forEach(el=>{
+    el.onclick = () => {
+      const uid = el.getAttribute('data-toggle-loans');
+      const current = el.getAttribute('data-current') === 'true';
+      db.collection('users').doc(uid).update({ canLoans: !current })
+        .catch(e=>showError('Erro ao atualizar permissão: '+e.message));
     };
   });
   const addUserBtn = document.getElementById('openAddUser');
@@ -619,6 +827,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 // ---------- FAB ----------
 fabBtn.addEventListener('click', ()=>{
   if(state.tab === 'emprestimos') openLoanForm();
+  else if(state.tab === 'previsao') openRecurrenceForm();
   else if(state.tab !== 'usuarios') openTxForm();
 });
 
@@ -684,6 +893,119 @@ function openTxForm(){
       category: overlay.querySelector('#txCategory').value,
       date: overlay.querySelector('#txDate').value || todayISO(),
     });
+    overlay.remove();
+  };
+}
+
+// ---------- Recurrence (previsão) form ----------
+function openRecurrenceForm(){
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  const tipoOptions = Object.entries(TIPOS_RECEITA).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
+  const diaSemanaOptions = DIAS_SEMANA.map((d,i)=>`<option value="${i}">${d}</option>`).join('');
+  overlay.innerHTML = `
+    <div class="sheet" role="dialog">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">Nova fonte de renda</div>
+        <button class="icon-btn" id="closeRecForm">✕</button>
+      </div>
+      <label class="field-label">Tipo</label>
+      <select id="recTipo">${tipoOptions}</select>
+      <label class="field-label">Descrição</label>
+      <input id="recDesc" placeholder="Ex: Aluguel dos 3 carros">
+      <label class="field-label">Valor por ocorrência</label>
+      <input id="recValor" inputmode="decimal" placeholder="0,00">
+
+      <label class="field-label">Frequência</label>
+      <div class="segmented">
+        <button type="button" class="seg-btn active-gold" id="segSemanal">Semanal</button>
+        <button type="button" class="seg-btn" id="segMensal">Mensal</button>
+        <button type="button" class="seg-btn" id="segParcelas">Parcelado</button>
+      </div>
+
+      <div id="semanalFields">
+        <label class="field-label">Dia da semana</label>
+        <select id="recDiaSemana">${diaSemanaOptions}</select>
+      </div>
+      <div id="mensalFields" style="display:none;">
+        <label class="field-label">Dia do mês</label>
+        <input id="recDiaMes" inputmode="numeric" placeholder="Ex: 5" value="5">
+      </div>
+      <div id="parcelasFields" style="display:none;">
+        <label class="field-label">Total de parcelas</label>
+        <input id="recParcelasTotal" inputmode="numeric" placeholder="Ex: 6">
+        <label class="field-label">Parcelas já pagas</label>
+        <input id="recParcelasPagas" inputmode="numeric" placeholder="0" value="0">
+      </div>
+
+      <label class="field-label">Data de início</label>
+      <input id="recDataInicio" type="date" value="${todayISO()}">
+
+      <button class="save-btn" id="recSave" disabled>Salvar fonte de renda</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  let frequencia = 'semanal';
+  const semanalFields = overlay.querySelector('#semanalFields');
+  const mensalFields = overlay.querySelector('#mensalFields');
+  const parcelasFields = overlay.querySelector('#parcelasFields');
+  const segSemanal = overlay.querySelector('#segSemanal');
+  const segMensal = overlay.querySelector('#segMensal');
+  const segParcelas = overlay.querySelector('#segParcelas');
+  function setFreq(f){
+    frequencia = f;
+    [segSemanal,segMensal,segParcelas].forEach(b=>b.classList.remove('active-gold'));
+    semanalFields.style.display = 'none'; mensalFields.style.display='none'; parcelasFields.style.display='none';
+    if(f==='semanal'){ segSemanal.classList.add('active-gold'); semanalFields.style.display=''; }
+    if(f==='mensal'){ segMensal.classList.add('active-gold'); mensalFields.style.display=''; }
+    if(f==='parcelas'){ segParcelas.classList.add('active-gold'); parcelasFields.style.display=''; }
+    validate();
+  }
+  segSemanal.onclick = () => setFreq('semanal');
+  segMensal.onclick = () => setFreq('mensal');
+  segParcelas.onclick = () => setFreq('parcelas');
+
+  const valorInput = overlay.querySelector('#recValor');
+  const parcelasTotalInput = overlay.querySelector('#recParcelasTotal');
+  const saveBtn = overlay.querySelector('#recSave');
+  function validate(){
+    const v = parseFloat(valorInput.value.replace(',','.'));
+    let ok = v > 0;
+    if(frequencia === 'parcelas'){
+      const pt = parseInt(parcelasTotalInput.value, 10);
+      ok = ok && pt > 0;
+    }
+    saveBtn.disabled = !ok;
+  }
+  [valorInput, parcelasTotalInput].forEach(el => el.oninput = validate);
+
+  overlay.querySelector('#closeRecForm').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  saveBtn.onclick = () => {
+    const valor = parseFloat(valorInput.value.replace(',','.'));
+    if(!(valor>0)) return;
+    const rec = {
+      tipo: overlay.querySelector('#recTipo').value,
+      descricao: overlay.querySelector('#recDesc').value.trim(),
+      valor,
+      frequencia,
+      dataInicio: overlay.querySelector('#recDataInicio').value || todayISO(),
+      ativo: true,
+    };
+    if(frequencia === 'semanal'){
+      rec.diaSemana = parseInt(overlay.querySelector('#recDiaSemana').value, 10);
+    }else if(frequencia === 'mensal'){
+      rec.diaMes = Math.min(28, Math.max(1, parseInt(overlay.querySelector('#recDiaMes').value, 10) || 1));
+    }else if(frequencia === 'parcelas'){
+      const pt = parseInt(parcelasTotalInput.value, 10);
+      if(!(pt>0)) return;
+      rec.parcelasTotal = pt;
+      rec.parcelasPagas = parseInt(overlay.querySelector('#recParcelasPagas').value, 10) || 0;
+    }
+    addRecurrence(rec);
     overlay.remove();
   };
 }
@@ -915,7 +1237,7 @@ function openAddUserForm(){
       secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
       const cred = await secondaryApp.auth().createUserWithEmailAndPassword(usernameToEmail(username), password);
       await db.collection('users').doc(cred.user.uid).set({
-        username, role, active: true, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        username, role, active: true, canLoans: false, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       await secondaryApp.auth().signOut();
       overlay.remove();
