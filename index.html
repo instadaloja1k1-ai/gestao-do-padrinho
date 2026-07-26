@@ -12,12 +12,15 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.svg">
 <link rel="icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#0F1419; --surface:#161C24; --surface2:#1A2129; --border:#2A323C;
     --text:#E8E6E1; --muted:#889099; --dim:#6B7480;
     --gold:#C9A15A; --green:#7FBFA6; --red:#D98A8E;
-    --font-display: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    --font-display: 'Playfair Display', Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
     --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   }
@@ -28,7 +31,7 @@
   header{display:flex;align-items:center;justify-content:space-between;
     padding:calc(env(safe-area-inset-top) + 18px) 20px 14px;border-bottom:1px solid #1F2730;}
   .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;}
-  .brand{font-family:var(--font-display);font-size:24px;font-weight:600;margin-top:2px;}
+  .brand{font-family:var(--font-display);font-size:25px;font-weight:700;margin-top:2px;letter-spacing:.01em;}
   main{flex:1;padding:16px 20px 110px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   .month-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:18px;}
   .month-label{font-family:var(--font-mono);font-size:13px;letter-spacing:.04em;color:#B8BEC7;
@@ -153,6 +156,14 @@
   .rec-actions{display:flex;justify-content:space-between;align-items:center;margin-top:2px;}
   .chart-wrap{position:relative;height:220px;margin-bottom:28px;}
   .chart-wrap.tall{height:240px;}
+  .vehicle-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;
+    margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .vehicle-model{font-weight:600;font-size:15px;}
+  .vehicle-plate{font-size:11px;color:var(--dim);font-family:var(--font-mono);margin-top:2px;}
+  .status-pill{font-size:10px;padding:4px 10px;border-radius:8px;white-space:nowrap;cursor:pointer;letter-spacing:.02em;}
+  .status-pill.alugado{background:#17251F;color:var(--green);border:1px solid #274A3B;}
+  .status-pill.disponivel{background:#1B2A3A;color:#8FB4D9;border:1px solid #2C4459;}
+  .status-pill.manutencao{background:#3A2323;color:var(--red);border:1px solid #5A3333;}
 </style>
 </head>
 <body>
@@ -431,7 +442,7 @@ function renderPrevisaoCharts(){
 
 // ---------- state ----------
 const state = {
-  data: { transactions: [], loans: [], recurrences: [] },
+  data: { transactions: [], loans: [], recurrences: [], vehicles: [] },
   tab: 'resumo',
   refMonth: new Date(),
   currentUser: null,   // { uid, username, role, canLoans }
@@ -442,6 +453,7 @@ const state = {
   unsubLoans: null,
   unsubUsers: null,
   unsubRec: null,
+  unsubVehicles: null,
 };
 
 // =====================================================================
@@ -539,6 +551,8 @@ function detachListeners(){
   if(state.unsubUsers) state.unsubUsers();
   if(state.unsubRec) state.unsubRec();
   state.unsubTx = state.unsubLoans = state.unsubUsers = state.unsubRec = null;
+  if(state.unsubVehicles) state.unsubVehicles();
+  state.unsubVehicles = null;
 }
 
 function attachDataListeners(uid){
@@ -560,6 +574,12 @@ function attachDataListeners(uid){
       state.data.recurrences = qs.docs.map(d => ({ id: d.id, ...d.data() }));
       render();
     }, err => showError('Erro ao carregar previsões: '+err.message));
+  if(state.unsubVehicles) state.unsubVehicles();
+  state.unsubVehicles = db.collection('users').doc(uid).collection('vehicles')
+    .onSnapshot(qs => {
+      state.data.vehicles = qs.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, err => showError('Erro ao carregar frota: '+err.message));
 }
 
 function attachUsersListener(){
@@ -590,6 +610,23 @@ function deleteLoan(id){ return dataCol('loans').doc(id).delete().catch(e=>showE
 function addRecurrence(rec){ return dataCol('recurrences').add(rec).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateRecurrence(id, patch){ return dataCol('recurrences').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteRecurrence(id){ return dataCol('recurrences').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function addVehicle(v){ return dataCol('vehicles').add(v).catch(e=>showError('Erro ao salvar: '+e.message)); }
+function updateVehicle(id, patch){ return dataCol('vehicles').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
+function deleteVehicle(id){ return dataCol('vehicles').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function markForecastReceived(recId, date, valor){
+  const rec = state.data.recurrences.find(r=>r.id===recId);
+  if(!rec) return;
+  addTransaction({
+    type: 'income',
+    description: rec.descricao || TIPOS_RECEITA[rec.tipo].label,
+    amount: valor,
+    category: 'Rendimentos',
+    date,
+  });
+  if(rec.frequencia === 'parcelas'){
+    updateRecurrence(recId, { parcelasPagas: (rec.parcelasPagas||0)+1 });
+  }
+}
 
 // =====================================================================
 // RENDER ROOT
@@ -757,6 +794,7 @@ function renderPrevisao(){
             <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
           </div>
           <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+          <button class="small-btn" data-mark-received="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}">recebido</button>
         </div>
       `).join('')}
     </div>`}
@@ -765,18 +803,40 @@ function renderPrevisao(){
     ${ativos.length===0 && inativos.length===0 ? '<div class="empty-note">Nenhuma fonte cadastrada ainda.</div>' : ''}
     ${ativos.map(recCardHtml).join('')}
     ${inativos.length>0 ? inativos.map(recCardHtml).join('') : ''}
+
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>sua frota</span>
+      <button class="small-btn" id="openAddVehicle">+ carro</button>
+    </div>
+    ${state.data.vehicles.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda.</div>' : state.data.vehicles.map(vehicleCardHtml).join('')}
+  `;
+}
+function vehicleCardHtml(v){
+  const statusLabel = { alugado: 'Alugado', disponivel: 'Disponível', manutencao: 'Manutenção' }[v.status] || 'Disponível';
+  return `
+    <div class="vehicle-card">
+      <div>
+        <div class="vehicle-model">${escapeHtml(v.modelo)}</div>
+        <div class="vehicle-plate">${escapeHtml(v.placa) || 'sem placa cadastrada'}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="status-pill ${v.status||'disponivel'}" data-cycle-status="${v.id}" data-current="${v.status||'disponivel'}">${statusLabel}</span>
+        <button class="trash-btn" data-delete-vehicle="${v.id}">✕</button>
+      </div>
+    </div>
   `;
 }
 function recCardHtml(r){
   const freqLabel = r.frequencia === 'semanal' ? `Toda ${DIAS_SEMANA[r.diaSemana].toLowerCase()}`
     : r.frequencia === 'mensal' ? `Todo dia ${r.diaMes}`
     : `Parcelado (${r.parcelasPagas||0}/${r.parcelasTotal} pagas)`;
+  const veiculo = r.veiculoId ? state.data.vehicles.find(v=>v.id===r.veiculoId) : null;
   return `
     <div class="rec-card" style="opacity:${r.ativo===false?0.5:1}">
       <div class="rec-card-top">
         <div>
           <div class="rec-desc">${escapeHtml(r.descricao) || TIPOS_RECEITA[r.tipo].label}</div>
-          <div class="rec-meta">${TIPOS_RECEITA[r.tipo].label} · ${freqLabel} · ${fmt(r.valor)}</div>
+          <div class="rec-meta">${TIPOS_RECEITA[r.tipo].label}${veiculo ? ` · ${escapeHtml(veiculo.placa||veiculo.modelo)}` : ''} · ${freqLabel} · ${fmt(r.valor)}</div>
         </div>
         <div class="toggle ${r.ativo!==false?'on':''}" data-toggle-rec="${r.id}" data-current="${r.ativo!==false}"><div class="toggle-dot"></div></div>
       </div>
@@ -882,6 +942,27 @@ function attachMainListeners(){
       const id = el.getAttribute('data-toggle-rec');
       const current = el.getAttribute('data-current') === 'true';
       updateRecurrence(id, { ativo: !current });
+    };
+  });
+  document.querySelectorAll('[data-mark-received]').forEach(btn=>{
+    btn.onclick = () => markForecastReceived(
+      btn.getAttribute('data-mark-received'),
+      btn.getAttribute('data-occ-date'),
+      parseFloat(btn.getAttribute('data-occ-valor'))
+    );
+  });
+  const addVehicleBtn = document.getElementById('openAddVehicle');
+  if(addVehicleBtn) addVehicleBtn.onclick = openVehicleForm;
+  document.querySelectorAll('[data-delete-vehicle]').forEach(btn=>{
+    btn.onclick = () => deleteVehicle(btn.getAttribute('data-delete-vehicle'));
+  });
+  document.querySelectorAll('[data-cycle-status]').forEach(el=>{
+    el.onclick = () => {
+      const order = ['disponivel','alugado','manutencao'];
+      const id = el.getAttribute('data-cycle-status');
+      const current = el.getAttribute('data-current');
+      const next = order[(order.indexOf(current)+1) % order.length];
+      updateVehicle(id, { status: next });
     };
   });
 
@@ -1012,6 +1093,10 @@ function openRecurrenceForm(){
       </div>
       <label class="field-label">Tipo</label>
       <select id="recTipo">${tipoOptions}</select>
+      <div id="veiculoField" style="display:none;">
+        <label class="field-label">Carro</label>
+        <select id="recVeiculo"><option value="">(nenhum específico)</option>${state.data.vehicles.map(v=>`<option value="${v.id}">${escapeHtml(v.modelo)}${v.placa?` — ${escapeHtml(v.placa)}`:''}</option>`).join('')}</select>
+      </div>
       <label class="field-label">Descrição</label>
       <input id="recDesc" placeholder="Ex: Aluguel dos 3 carros">
       <label class="field-label">Valor por ocorrência</label>
@@ -1046,6 +1131,12 @@ function openRecurrenceForm(){
     </div>
   `;
   document.body.appendChild(overlay);
+
+  const veiculoField = overlay.querySelector('#veiculoField');
+  const recTipoSelect = overlay.querySelector('#recTipo');
+  function syncVeiculoField(){ veiculoField.style.display = (recTipoSelect.value === 'frota') ? '' : 'none'; }
+  recTipoSelect.onchange = syncVeiculoField;
+  syncVeiculoField();
 
   let frequencia = 'semanal';
   const semanalFields = overlay.querySelector('#semanalFields');
@@ -1095,6 +1186,10 @@ function openRecurrenceForm(){
       dataInicio: overlay.querySelector('#recDataInicio').value || todayISO(),
       ativo: true,
     };
+    if(rec.tipo === 'frota'){
+      const vId = overlay.querySelector('#recVeiculo').value;
+      if(vId) rec.veiculoId = vId;
+    }
     if(frequencia === 'semanal'){
       rec.diaSemana = parseInt(overlay.querySelector('#recDiaSemana').value, 10);
     }else if(frequencia === 'mensal'){
@@ -1111,6 +1206,50 @@ function openRecurrenceForm(){
 }
 
 // ---------- Loan form ----------
+// ---------- Vehicle (frota) form ----------
+function openVehicleForm(){
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet" role="dialog">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">Novo carro</div>
+        <button class="icon-btn" id="closeVehicleForm">✕</button>
+      </div>
+      <label class="field-label">Modelo</label>
+      <input id="vehicleModelo" placeholder="Ex: Gol, HB20x, Sandero...">
+      <label class="field-label">Placa (opcional)</label>
+      <input id="vehiclePlaca" placeholder="Ex: ABC1D23" autocapitalize="off">
+      <label class="field-label">Status</label>
+      <select id="vehicleStatus">
+        <option value="disponivel">Disponível</option>
+        <option value="alugado">Alugado</option>
+        <option value="manutencao">Manutenção</option>
+      </select>
+      <button class="save-btn" id="vehicleSave" disabled>Salvar carro</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const modeloInput = overlay.querySelector('#vehicleModelo');
+  const saveBtn = overlay.querySelector('#vehicleSave');
+  modeloInput.oninput = () => { saveBtn.disabled = !modeloInput.value.trim(); };
+
+  overlay.querySelector('#closeVehicleForm').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  saveBtn.onclick = () => {
+    const modelo = modeloInput.value.trim();
+    if(!modelo) return;
+    addVehicle({
+      modelo,
+      placa: overlay.querySelector('#vehiclePlaca').value.trim(),
+      status: overlay.querySelector('#vehicleStatus').value,
+    });
+    overlay.remove();
+  };
+}
+
 function openLoanForm(){
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
