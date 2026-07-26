@@ -151,6 +151,8 @@
   .rec-desc{font-size:15px;font-weight:600;}
   .rec-meta{font-size:11px;color:var(--dim);}
   .rec-actions{display:flex;justify-content:space-between;align-items:center;margin-top:2px;}
+  .chart-wrap{position:relative;height:220px;margin-bottom:28px;}
+  .chart-wrap.tall{height:240px;}
 </style>
 </head>
 <body>
@@ -182,6 +184,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 
 <script>
 'use strict';
@@ -335,6 +338,95 @@ function buildForecast(recurrences, diasJanela){
   });
   items.sort((a,b)=> a.date < b.date ? -1 : 1);
   return items;
+}
+
+// ---------- charts ----------
+const CHART_COLORS = ['#C9A15A','#7FBFA6','#D98A8E','#8FB4D9','#D9A8D9','#889099','#E0C68A','#5FA88F'];
+const chartInstances = {};
+function destroyChart(id){
+  if(chartInstances[id]){ chartInstances[id].destroy(); delete chartInstances[id]; }
+}
+function makeDoughnut(canvasId, labels, data, colors){
+  destroyChart(canvasId);
+  const el = document.getElementById(canvasId);
+  if(!el || labels.length===0) return;
+  chartInstances[canvasId] = new Chart(el, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+    options: {
+      maintainAspectRatio: false,
+      cutout: '65%',
+      plugins: { legend: { position: 'bottom', labels: { color: '#B8BEC7', font: { size: 11 }, boxWidth: 10, padding: 12 } } }
+    }
+  });
+}
+function makeBar(canvasId, labels, datasets, stacked){
+  destroyChart(canvasId);
+  const el = document.getElementById(canvasId);
+  if(!el) return;
+  chartInstances[canvasId] = new Chart(el, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      maintainAspectRatio: false,
+      scales: {
+        x: { stacked: !!stacked, ticks: { color: '#889099', font: { size: 11 } }, grid: { color: '#1A2129' } },
+        y: { stacked: !!stacked, ticks: { color: '#889099', font: { size: 11 } }, grid: { color: '#1A2129' } }
+      },
+      plugins: { legend: { display: datasets.length>1, position: 'bottom', labels: { color: '#B8BEC7', font: { size: 11 } } } }
+    }
+  });
+}
+function renderCharts(){
+  if(state.tab === 'resumo') renderResumoCharts();
+  else if(state.tab === 'previsao') renderPrevisaoCharts();
+}
+function renderResumoCharts(){
+  const refMonth = state.refMonth;
+  const monthTx = state.data.transactions.filter(t => isSameMonth(t.date, refMonth));
+  const byCat = {};
+  monthTx.filter(t=>t.type==='expense').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+t.amount; });
+  const catEntries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  makeDoughnut('chartGastos', catEntries.map(e=>e[0]), catEntries.map(e=>e[1]), CHART_COLORS);
+
+  // últimos 6 meses: entradas vs saídas
+  const months = [];
+  for(let i=5;i>=0;i--) months.push(addMonths(new Date(refMonth), -i));
+  const labels = months.map(m=>m.toLocaleDateString('pt-BR',{month:'short'}));
+  const incomeData = months.map(m => state.data.transactions.filter(t=>t.type==='income' && isSameMonth(t.date,m)).reduce((s,t)=>s+t.amount,0));
+  const expenseData = months.map(m => state.data.transactions.filter(t=>t.type==='expense' && isSameMonth(t.date,m)).reduce((s,t)=>s+t.amount,0));
+  makeBar('chartTendencia', labels, [
+    { label: 'Entradas', data: incomeData, backgroundColor: '#7FBFA6' },
+    { label: 'Saídas', data: expenseData, backgroundColor: '#D98A8E' },
+  ]);
+}
+function renderPrevisaoCharts(){
+  const recs = state.data.recurrences.map(normalizeRecurrence);
+  const forecast = buildForecast(recs, FORECAST_WINDOW_DAYS);
+  const byTipo = {};
+  forecast.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
+  const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
+  makeDoughnut('chartPrevisaoTipo',
+    tipoEntries.map(([t])=>TIPOS_RECEITA[t].label),
+    tipoEntries.map(([,v])=>v),
+    tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
+
+  // agrupado por semana, próximas ~5 semanas
+  const hoje = midnight(new Date());
+  const numSemanas = Math.ceil(FORECAST_WINDOW_DAYS/7);
+  const semanaLabels = [];
+  const semanaTotais = [];
+  for(let i=0;i<numSemanas;i++){
+    const inicioSemana = addDays(hoje, i*7);
+    const fimSemana = addDays(hoje, i*7+6);
+    const total = forecast.filter(f=>{
+      const d = midnight(new Date(f.date+'T00:00:00'));
+      return d >= inicioSemana && d <= fimSemana;
+    }).reduce((s,f)=>s+f.valor,0);
+    semanaLabels.push(`${inicioSemana.getDate()}/${inicioSemana.getMonth()+1}`);
+    semanaTotais.push(total);
+  }
+  makeBar('chartPrevisaoSemanal', semanaLabels, [{ label: 'Previsto', data: semanaTotais, backgroundColor: '#C9A15A' }]);
 }
 
 // ---------- state ----------
@@ -516,6 +608,7 @@ function render(){
   else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + renderEmprestimos();
   else mainEl.innerHTML = renderUsuarios();
   attachMainListeners();
+  renderCharts();
 }
 
 // ---------- Resumo ----------
@@ -564,6 +657,7 @@ function renderResumo(){
     </div>
     <div class="section-title">gastos por categoria</div>
     ${catEntries.length===0 ? '<div class="empty-note">Nenhum gasto lançado este mês.</div>' : `
+    <div class="chart-wrap"><canvas id="chartGastos"></canvas></div>
     <div class="cat-list">
       ${catEntries.map(([cat,val])=>`
         <div>
@@ -572,6 +666,8 @@ function renderResumo(){
         </div>
       `).join('')}
     </div>`}
+    <div class="section-title">entradas vs saídas (últimos 6 meses)</div>
+    <div class="chart-wrap"><canvas id="chartTendencia"></canvas></div>
     <div class="section-title">dinheiro emprestado a juros</div>
     <div class="loan-summary-card">
       <div class="loan-summary-row"><span class="balance-col-label">Capital emprestado</span><span style="font-family:var(--font-mono);font-size:17px;">${fmt(totalEmprestado)}</span></div>
@@ -637,6 +733,7 @@ function renderPrevisao(){
 
     <div class="section-title">por tipo de entrada</div>
     ${tipoEntries.length===0 ? '<div class="empty-note">Nenhuma entrada prevista. Toque em + para cadastrar uma fonte de renda recorrente.</div>' : `
+    <div class="chart-wrap"><canvas id="chartPrevisaoTipo"></canvas></div>
     <div class="cat-list">
       ${tipoEntries.map(([tipo,val])=>`
         <div>
@@ -645,6 +742,9 @@ function renderPrevisao(){
         </div>
       `).join('')}
     </div>`}
+
+    <div class="section-title">previsão por semana</div>
+    <div class="chart-wrap"><canvas id="chartPrevisaoSemanal"></canvas></div>
 
     <div class="section-title">linha do tempo</div>
     ${forecast.length===0 ? '<div class="empty-note">Nada previsto para o período.</div>' : `
