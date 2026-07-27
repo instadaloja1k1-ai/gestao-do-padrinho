@@ -273,9 +273,15 @@ function normalizeLoan(l){
   return Object.assign({
     calcMode: 'rate', rate: 0, compound: false, expectedAmount: null,
     dueDate: null, lateFee: { mode: 'fixed', value: 0 },
+    jurosTotal: 0, numParcelas: null, parcelasPagasCount: 0, primeiraParcelaData: null,
   }, l);
 }
 function computeLoanAmounts(l, asOfDate){
+  if(l.calcMode === 'parcelado'){
+    const baseTotal = l.principal + (l.jurosTotal||0);
+    const valorParcela = baseTotal / (l.numParcelas||1);
+    return { baseTotal, juros: l.jurosTotal||0, daysLate: 0, lateFeeTotal: 0, total: baseTotal, valorParcela };
+  }
   let baseTotal;
   if(l.calcMode === 'fixed'){
     baseTotal = (l.expectedAmount != null) ? l.expectedAmount : l.principal;
@@ -627,6 +633,27 @@ function deleteTransaction(id){ return dataCol('transactions').doc(id).delete().
 function addLoan(loan){ return dataCol('loans').add(loan).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateLoan(id, patch){ return dataCol('loans').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteLoan(id){ return dataCol('loans').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function registrarParcelaEmprestimo(loanId){
+  const loan = state.data.loans.find(l=>l.id===loanId);
+  if(!loan) return;
+  const l = normalizeLoan(loan);
+  const { valorParcela } = computeLoanAmounts(l, new Date());
+  const proximaParcela = (l.parcelasPagasCount||0) + 1;
+  const patch = { parcelasPagasCount: proximaParcela };
+  if(proximaParcela >= l.numParcelas){
+    patch.status = 'paid';
+    patch.paidDate = todayISO();
+  }
+  updateLoan(loanId, patch);
+  addTransaction({
+    type: 'income',
+    description: `Parcela ${proximaParcela}/${l.numParcelas} recebida - ${loan.borrower}`,
+    amount: valorParcela,
+    category: 'Rendimentos',
+    date: todayISO(),
+  });
+  showToast(`✓ ${fmt(valorParcela)} — parcela ${proximaParcela}/${l.numParcelas}`);
+}
 function addRecurrence(rec){ return dataCol('recurrences').add(rec).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateRecurrence(id, patch){ return dataCol('recurrences').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteRecurrence(id){ return dataCol('recurrences').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
@@ -934,6 +961,29 @@ function recCardHtml(r){
 // ---------- Empréstimos ----------
 function loanCardHtml(l){
   const isPaid = l.status === 'paid';
+  if(l.calcMode === 'parcelado'){
+    const { juros, total, valorParcela } = computeLoanAmounts(l, new Date());
+    const pagas = l.parcelasPagasCount||0;
+    const restante = (l.numParcelas||0) - pagas;
+    const proximaData = l.primeiraParcelaData ? addMonths(midnight(new Date(l.primeiraParcelaData+'T00:00:00')), pagas) : null;
+    return `
+    <div class="loan-card">
+      <div class="loan-card-top">
+        <div class="loan-borrower ${isPaid ? 'paid' : 'owed'}">${escapeHtml(l.borrower)}</div>
+        ${isPaid ? '<span class="paid-badge">✓ quitado</span>' : `<button class="small-btn" data-registrar-parcela="${l.id}">Registrar parcela</button>`}
+      </div>
+      <div class="loan-summary-row"><span class="balance-col-label">Capital</span><span style="font-family:var(--font-mono);font-size:15px;">${fmt(l.principal)}</span></div>
+      <div class="loan-summary-row"><span class="balance-col-label">Juros total</span><span style="font-family:var(--font-mono);font-size:15px;color:var(--gold);">${fmt(juros)}</span></div>
+      <div class="loan-summary-row"><span class="balance-col-label">Parcelas</span><span style="font-family:var(--font-mono);font-size:15px;">${pagas}/${l.numParcelas} · ${fmt(valorParcela)} cada</span></div>
+      ${!isPaid && proximaData ? `<div class="loan-summary-row"><span class="balance-col-label">Próxima parcela</span><span style="font-family:var(--font-mono);font-size:15px;">${proximaData.toLocaleDateString('pt-BR')}</span></div>` : ''}
+      <div class="loan-summary-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px;">
+        <span class="balance-col-label" style="color:var(--text)">Total (${l.numParcelas}x)</span>
+        <span style="font-family:var(--font-mono);font-size:16px;font-weight:600;color:var(--gold);">${fmt(total)}</span>
+      </div>
+      <button class="trash-btn-loan" data-delete-loan="${l.id}">✕ excluir</button>
+    </div>
+  `;
+  }
   const { juros, lateFeeTotal, daysLate, total } = computeLoanAmounts(l, isPaid ? new Date(l.paidDate+'T00:00:00') : new Date());
   return `
     <div class="loan-card">
@@ -1011,6 +1061,9 @@ function attachMainListeners(){
   });
   document.querySelectorAll('[data-mark-paid]').forEach(btn=>{
     btn.onclick = () => openMarkPaidForm(btn.getAttribute('data-mark-paid'));
+  });
+  document.querySelectorAll('[data-registrar-parcela]').forEach(btn=>{
+    btn.onclick = () => registrarParcelaEmprestimo(btn.getAttribute('data-registrar-parcela'));
   });
   document.querySelectorAll('[data-delete-loan]').forEach(btn=>{
     btn.onclick = () => deleteLoan(btn.getAttribute('data-delete-loan'));
@@ -1394,6 +1447,7 @@ function openLoanForm(){
       <div class="segmented">
         <button type="button" class="seg-btn active-gold" id="segRateMode">Calcular por juros</button>
         <button type="button" class="seg-btn" id="segFixedMode">Valor fixo a receber</button>
+        <button type="button" class="seg-btn" id="segParceladoMode">Parcelado</button>
       </div>
 
       <div id="rateModeFields">
@@ -1408,18 +1462,30 @@ function openLoanForm(){
         <label class="field-label">Valor total a receber</label>
         <input id="loanExpected" inputmode="decimal" placeholder="0,00">
       </div>
+      <div id="parceladoModeFields" style="display:none;">
+        <label class="field-label">Juros total (R$)</label>
+        <input id="loanJurosTotal" inputmode="decimal" placeholder="Ex: 400">
+        <label class="field-label">Número de parcelas</label>
+        <input id="loanNumParcelas" inputmode="numeric" placeholder="Ex: 8">
+        <label class="field-label">Data da 1ª parcela</label>
+        <input id="loanPrimeiraParcela" type="date">
+      </div>
 
       <label class="field-label">Data do empréstimo</label>
       <input id="loanDate" type="date" value="${todayISO()}">
-      <label class="field-label">Data de vencimento</label>
-      <input id="loanDue" type="date">
-
-      <label class="field-label">Multa por atraso (por dia)</label>
-      <div class="segmented">
-        <button type="button" class="seg-btn active-gold" id="segFeeFixed">Fixo (R$/dia)</button>
-        <button type="button" class="seg-btn" id="segFeePercent">Percentual (%/dia)</button>
+      <div id="dueDateField">
+        <label class="field-label">Data de vencimento</label>
+        <input id="loanDue" type="date">
       </div>
-      <input id="loanFeeValue" inputmode="decimal" placeholder="Ex: 5" value="0">
+
+      <div id="lateFeeFields">
+        <label class="field-label">Multa por atraso (por dia)</label>
+        <div class="segmented">
+          <button type="button" class="seg-btn active-gold" id="segFeeFixed">Fixo (R$/dia)</button>
+          <button type="button" class="seg-btn" id="segFeePercent">Percentual (%/dia)</button>
+        </div>
+        <input id="loanFeeValue" inputmode="decimal" placeholder="Ex: 5" value="0">
+      </div>
 
       <button class="save-btn" id="loanSave" disabled>Salvar empréstimo</button>
     </div>
@@ -1432,16 +1498,28 @@ function openLoanForm(){
 
   const rateModeFields = overlay.querySelector('#rateModeFields');
   const fixedModeFields = overlay.querySelector('#fixedModeFields');
+  const parceladoModeFields = overlay.querySelector('#parceladoModeFields');
+  const dueDateField = overlay.querySelector('#dueDateField');
+  const lateFeeFields = overlay.querySelector('#lateFeeFields');
   const segRateMode = overlay.querySelector('#segRateMode');
   const segFixedMode = overlay.querySelector('#segFixedMode');
-  segRateMode.onclick = () => {
-    calcMode='rate'; segRateMode.classList.add('active-gold'); segFixedMode.classList.remove('active-gold');
-    rateModeFields.style.display=''; fixedModeFields.style.display='none'; validate();
-  };
-  segFixedMode.onclick = () => {
-    calcMode='fixed'; segFixedMode.classList.add('active-gold'); segRateMode.classList.remove('active-gold');
-    rateModeFields.style.display='none'; fixedModeFields.style.display=''; validate();
-  };
+  const segParceladoMode = overlay.querySelector('#segParceladoMode');
+  function selectMode(mode){
+    calcMode = mode;
+    [segRateMode, segFixedMode, segParceladoMode].forEach(b=>b.classList.remove('active-gold'));
+    rateModeFields.style.display='none'; fixedModeFields.style.display='none'; parceladoModeFields.style.display='none';
+    dueDateField.style.display=''; lateFeeFields.style.display='';
+    if(mode==='rate'){ segRateMode.classList.add('active-gold'); rateModeFields.style.display=''; }
+    if(mode==='fixed'){ segFixedMode.classList.add('active-gold'); fixedModeFields.style.display=''; }
+    if(mode==='parcelado'){
+      segParceladoMode.classList.add('active-gold'); parceladoModeFields.style.display='';
+      dueDateField.style.display='none'; lateFeeFields.style.display='none';
+    }
+    validate();
+  }
+  segRateMode.onclick = () => selectMode('rate');
+  segFixedMode.onclick = () => selectMode('fixed');
+  segParceladoMode.onclick = () => selectMode('parcelado');
 
   const segSimples = overlay.querySelector('#segSimples');
   const segComposto = overlay.querySelector('#segComposto');
@@ -1457,6 +1535,9 @@ function openLoanForm(){
   const principalInput = overlay.querySelector('#loanPrincipal');
   const rateInput = overlay.querySelector('#loanRate');
   const expectedInput = overlay.querySelector('#loanExpected');
+  const jurosTotalInput = overlay.querySelector('#loanJurosTotal');
+  const numParcelasInput = overlay.querySelector('#loanNumParcelas');
+  const primeiraParcelaInput = overlay.querySelector('#loanPrimeiraParcela');
   const saveBtn = overlay.querySelector('#loanSave');
 
   function validate(){
@@ -1466,13 +1547,18 @@ function openLoanForm(){
     if(calcMode === 'rate'){
       const r = parseFloat(rateInput.value.replace(',','.'));
       modeOk = !isNaN(r);
-    }else{
+    }else if(calcMode === 'fixed'){
       const e = parseFloat(expectedInput.value.replace(',','.'));
       modeOk = e > 0;
+    }else{
+      const jt = parseFloat(jurosTotalInput.value.replace(',','.'));
+      const np = parseInt(numParcelasInput.value, 10);
+      modeOk = !isNaN(jt) && jt >= 0 && np > 0 && !!primeiraParcelaInput.value;
     }
     saveBtn.disabled = !(borrowerOk && p > 0 && modeOk);
   }
-  [borrowerInput, principalInput, rateInput, expectedInput].forEach(el => el.oninput = validate);
+  [borrowerInput, principalInput, rateInput, expectedInput, jurosTotalInput, numParcelasInput, primeiraParcelaInput].forEach(el => el.oninput = validate);
+  primeiraParcelaInput.onchange = validate;
 
   overlay.querySelector('#closeLoanForm').onclick = () => overlay.remove();
   overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
@@ -1481,9 +1567,12 @@ function openLoanForm(){
     const principal = parseFloat(principalInput.value.replace(',','.'));
     const rate = parseFloat(rateInput.value.replace(',','.')) || 0;
     const expected = parseFloat(expectedInput.value.replace(',','.')) || null;
+    const jurosTotal = parseFloat(jurosTotalInput.value.replace(',','.')) || 0;
+    const numParcelas = parseInt(numParcelasInput.value, 10) || 0;
     if(!(borrowerInput.value.trim() && principal>0)) return;
     if(calcMode==='rate' && isNaN(rate)) return;
     if(calcMode==='fixed' && !(expected>0)) return;
+    if(calcMode==='parcelado' && !(numParcelas>0 && primeiraParcelaInput.value)) return;
 
     const feeValue = parseFloat(overlay.querySelector('#loanFeeValue').value.replace(',','.')) || 0;
     const borrowerName = borrowerInput.value.trim();
@@ -1496,8 +1585,12 @@ function openLoanForm(){
       rate: calcMode==='rate' ? rate : 0,
       compound,
       expectedAmount: calcMode==='fixed' ? expected : null,
+      jurosTotal: calcMode==='parcelado' ? jurosTotal : 0,
+      numParcelas: calcMode==='parcelado' ? numParcelas : null,
+      primeiraParcelaData: calcMode==='parcelado' ? primeiraParcelaInput.value : null,
+      parcelasPagasCount: 0,
       startDate: loanStartDate,
-      dueDate: overlay.querySelector('#loanDue').value || null,
+      dueDate: calcMode==='parcelado' ? null : (overlay.querySelector('#loanDue').value || null),
       lateFee: { mode: feeMode, value: feeValue },
       status: 'active',
     });
