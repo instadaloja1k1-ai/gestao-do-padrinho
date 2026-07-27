@@ -75,6 +75,7 @@
   .loan-borrower.paid{color:var(--green);}
   .small-btn{background:#1F2730;border:1px solid var(--border);color:var(--gold);font-size:11px;
     padding:6px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+  .small-btn:disabled{opacity:.5;cursor:default;color:var(--green);}
   .paid-badge{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--green);
     background:#17251F;border:1px solid #274A3B;padding:4px 8px;border-radius:8px;white-space:nowrap;}
   .overdue-badge{align-self:flex-start;font-size:11px;color:var(--red);background:#3A2323;
@@ -179,6 +180,7 @@
     </div>
   </header>
   <div id="errorBanner" class="error-banner" style="display:none;"></div>
+  <div id="toastBanner" class="info-banner" style="display:none;"></div>
   <div id="gateArea"></div>
   <main id="main" style="display:none;"></main>
   <button class="fab" id="fabBtn" style="display:none;">+</button>
@@ -241,6 +243,11 @@ function showError(msg){
   const el = document.getElementById('errorBanner');
   el.textContent = msg; el.style.display = 'block';
   setTimeout(()=>{ el.style.display='none'; }, 4000);
+}
+function showToast(msg){
+  const el = document.getElementById('toastBanner');
+  el.textContent = msg; el.style.display = 'block';
+  setTimeout(()=>{ el.style.display='none'; }, 2500);
 }
 function usernameToEmail(u){ return `${u.trim().toLowerCase()}@${EMAIL_DOMAIN}`; }
 
@@ -627,6 +634,7 @@ function markForecastReceived(recId, date, valor){
   if(rec.frequencia === 'parcelas'){
     updateRecurrence(recId, { parcelasPagas: (rec.parcelasPagas||0)+1 });
   }
+  showToast(`✓ ${fmt(valor)} lançado em Lançamentos`);
 }
 
 // =====================================================================
@@ -947,11 +955,15 @@ function attachMainListeners(){
     };
   });
   document.querySelectorAll('[data-mark-received]').forEach(btn=>{
-    btn.onclick = () => markForecastReceived(
-      btn.getAttribute('data-mark-received'),
-      btn.getAttribute('data-occ-date'),
-      parseFloat(btn.getAttribute('data-occ-valor'))
-    );
+    btn.onclick = () => {
+      btn.disabled = true;
+      btn.textContent = '✓ ok';
+      markForecastReceived(
+        btn.getAttribute('data-mark-received'),
+        btn.getAttribute('data-occ-date'),
+        parseFloat(btn.getAttribute('data-occ-valor'))
+      );
+    };
   });
   const addVehicleBtn = document.getElementById('openAddVehicle');
   if(addVehicleBtn) addVehicleBtn.onclick = openVehicleForm;
