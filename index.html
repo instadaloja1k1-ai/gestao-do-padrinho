@@ -223,6 +223,15 @@ const db = firebase.firestore();
 
 // ---------- helpers ----------
 const fmt = n => (n||0).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
+// interpreta números digitados no padrão BR (ex: "3.379,34" ou "3379,34" ou "3379.34")
+function parseBR(str){
+  if(str == null) return NaN;
+  str = String(str).trim();
+  if(str.includes(',')){
+    str = str.replace(/\./g, '').replace(',', '.');
+  }
+  return parseFloat(str);
+}
 const monthLabel = d => d.toLocaleDateString('pt-BR', {month:'long', year:'numeric'});
 const isSameMonth = (iso, ref) => {
   const d = new Date(iso+'T00:00:00');
@@ -1226,7 +1235,7 @@ function openTxForm(){
   const amountInput = overlay.querySelector('#txAmount');
   const saveBtn = overlay.querySelector('#txSave');
   function validate(){
-    const v = parseFloat(amountInput.value.replace(',','.'));
+    const v = parseBR(amountInput.value);
     saveBtn.disabled = !(v > 0);
   }
   amountInput.oninput = validate;
@@ -1235,7 +1244,7 @@ function openTxForm(){
   overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
 
   saveBtn.onclick = () => {
-    const amount = parseFloat(amountInput.value.replace(',','.'));
+    const amount = parseBR(amountInput.value);
     if(!(amount>0)) return;
     addTransaction({
       type,
@@ -1362,7 +1371,7 @@ function openRecurrenceForm(){
   const saveBtn = overlay.querySelector('#recSave');
   setDirecao('entrada');
   function validate(){
-    const v = parseFloat(valorInput.value.replace(',','.'));
+    const v = parseBR(valorInput.value);
     let ok = v > 0;
     if(frequencia === 'parcelas'){
       const pt = parseInt(parcelasTotalInput.value, 10);
@@ -1376,7 +1385,7 @@ function openRecurrenceForm(){
   overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
 
   saveBtn.onclick = () => {
-    const valor = parseFloat(valorInput.value.replace(',','.'));
+    const valor = parseBR(valorInput.value);
     if(!(valor>0)) return;
     const rec = {
       direcao,
@@ -1570,17 +1579,17 @@ function openLoanForm(){
   const saveBtn = overlay.querySelector('#loanSave');
 
   function validate(){
-    const p = parseFloat(principalInput.value.replace(',','.'));
+    const p = parseBR(principalInput.value);
     const borrowerOk = !!borrowerInput.value.trim();
     let modeOk = false;
     if(calcMode === 'rate'){
-      const r = parseFloat(rateInput.value.replace(',','.'));
+      const r = parseBR(rateInput.value);
       modeOk = !isNaN(r);
     }else if(calcMode === 'fixed'){
-      const e = parseFloat(expectedInput.value.replace(',','.'));
+      const e = parseBR(expectedInput.value);
       modeOk = e > 0;
     }else{
-      const jt = parseFloat(jurosTotalInput.value.replace(',','.'));
+      const jt = parseBR(jurosTotalInput.value);
       const np = parseInt(numParcelasInput.value, 10);
       modeOk = !isNaN(jt) && jt >= 0 && np > 0 && !!primeiraParcelaInput.value;
     }
@@ -1593,17 +1602,17 @@ function openLoanForm(){
   overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
 
   saveBtn.onclick = () => {
-    const principal = parseFloat(principalInput.value.replace(',','.'));
-    const rate = parseFloat(rateInput.value.replace(',','.')) || 0;
-    const expected = parseFloat(expectedInput.value.replace(',','.')) || null;
-    const jurosTotal = parseFloat(jurosTotalInput.value.replace(',','.')) || 0;
+    const principal = parseBR(principalInput.value);
+    const rate = parseBR(rateInput.value) || 0;
+    const expected = parseBR(expectedInput.value) || null;
+    const jurosTotal = parseBR(jurosTotalInput.value) || 0;
     const numParcelas = parseInt(numParcelasInput.value, 10) || 0;
     if(!(borrowerInput.value.trim() && principal>0)) return;
     if(calcMode==='rate' && isNaN(rate)) return;
     if(calcMode==='fixed' && !(expected>0)) return;
     if(calcMode==='parcelado' && !(numParcelas>0 && primeiraParcelaInput.value)) return;
 
-    const feeValue = parseFloat(overlay.querySelector('#loanFeeValue').value.replace(',','.')) || 0;
+    const feeValue = parseBR(overlay.querySelector('#loanFeeValue').value) || 0;
     const borrowerName = borrowerInput.value.trim();
     const loanStartDate = overlay.querySelector('#loanDate').value || todayISO();
 
