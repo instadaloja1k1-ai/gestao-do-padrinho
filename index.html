@@ -330,9 +330,14 @@ function nextOccurrences(rec, lookbackDays, forwardDays){
     }
   }else if(rec.frequencia === 'parcelas'){
     const total = rec.parcelasTotal||0;
+    const recebidas = rec.receivedDates||[];
     for(let i=0;i<total;i++){
       const d = addMonths(inicio, i);
-      if(d >= rangeStart && d <= rangeEnd) out.push({ date: toISO(d), parcelaNum: i+1 });
+      const dateStr = toISO(d);
+      if(!recebidas.includes(dateStr)){
+        out.push({ date: dateStr, parcelaNum: i+1 });
+        break; // só a parcela atual pendente — nunca acumula parcelas atrasadas
+      }
     }
   }
   return out;
