@@ -316,12 +316,9 @@ function normalizeRecurrence(r){
     direcao: 'entrada', categoria: '',
   }, r);
 }
-// gera as ocorrências de uma recorrência dentro de uma janela [hoje-lookbackDays, hoje+forwardDays]
-function nextOccurrences(rec, lookbackDays, forwardDays){
+// gera as ocorrências de uma recorrência dentro de uma janela explícita [rangeStart, rangeEnd]
+function nextOccurrences(rec, rangeStart, rangeEnd){
   if(rec.ativo === false) return [];
-  const hoje = midnight(new Date());
-  const rangeStart = addDays(hoje, -lookbackDays);
-  const rangeEnd = addDays(hoje, forwardDays);
   const inicio = midnight(new Date(rec.dataInicio+'T00:00:00'));
   const out = [];
 
@@ -353,10 +350,10 @@ function nextOccurrences(rec, lookbackDays, forwardDays){
   }
   return out;
 }
-function buildForecast(recurrences, lookbackDays, forwardDays){
+function buildForecast(recurrences, rangeStart, rangeEnd){
   const items = [];
   recurrences.map(normalizeRecurrence).forEach(rec => {
-    nextOccurrences(rec, lookbackDays, forwardDays).forEach(occ => {
+    nextOccurrences(rec, rangeStart, rangeEnd).forEach(occ => {
       items.push({
         date: occ.date,
         tipo: rec.tipo,
@@ -373,6 +370,15 @@ function buildForecast(recurrences, lookbackDays, forwardDays){
   });
   items.sort((a,b)=> a.date < b.date ? -1 : 1);
   return items;
+}
+// calcula a janela de datas a olhar para um mês de referência da Previsão
+function previsaoRange(refDate){
+  const hoje = midnight(new Date());
+  const isCurrentMonth = refDate.getFullYear()===hoje.getFullYear() && refDate.getMonth()===hoje.getMonth();
+  const monthStart = midnight(new Date(refDate.getFullYear(), refDate.getMonth(), 1));
+  const monthEnd = midnight(new Date(refDate.getFullYear(), refDate.getMonth()+1, 0));
+  const rangeStart = isCurrentMonth ? addDays(hoje, -LOOKBACK_DAYS) : monthStart;
+  return { rangeStart, rangeEnd: monthEnd, isCurrentMonth, hoje };
 }
 
 // ---------- charts ----------
@@ -437,8 +443,8 @@ function renderResumoCharts(){
 }
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forwardDays = daysLeftInMonth();
-  const forecast = buildForecast(recs, LOOKBACK_DAYS, forwardDays);
+  const { rangeStart, rangeEnd } = previsaoRange(state.previsaoRefMonth);
+  const forecast = buildForecast(recs, rangeStart, rangeEnd);
   const pendentes = forecast.filter(i=>!i.received && i.direcao!=='saida');
   const byTipo = {};
   pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
@@ -448,20 +454,20 @@ function renderPrevisaoCharts(){
     tipoEntries.map(([,v])=>v),
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
 
-  // agrupado por semana, dentro do mês atual (só entradas ainda não recebidas)
-  const hoje = midnight(new Date());
-  const numSemanas = Math.max(1, Math.ceil(forwardDays/7));
+  // agrupado por semana, dentro da janela do mês selecionado (só entradas ainda não recebidas)
   const semanaLabels = [];
   const semanaTotais = [];
-  for(let i=0;i<numSemanas;i++){
-    const inicioSemana = addDays(hoje, i*7);
-    const fimSemana = addDays(hoje, i*7+6);
+  let cursor = new Date(rangeStart);
+  while(cursor <= rangeEnd){
+    const inicioSemana = new Date(cursor);
+    const fimSemana = addDays(cursor, 6);
     const total = pendentes.filter(f=>{
       const d = midnight(new Date(f.date+'T00:00:00'));
       return d >= inicioSemana && d <= fimSemana;
     }).reduce((s,f)=>s+f.valor,0);
     semanaLabels.push(`${inicioSemana.getDate()}/${inicioSemana.getMonth()+1}`);
     semanaTotais.push(total);
+    cursor = addDays(cursor, 7);
   }
   makeBar('chartPrevisaoSemanal', semanaLabels, [{ label: 'Previsto', data: semanaTotais, backgroundColor: '#C9A15A' }]);
 }
@@ -471,6 +477,7 @@ const state = {
   data: { transactions: [], loans: [], recurrences: [], vehicles: [] },
   tab: 'resumo',
   refMonth: new Date(),
+  previsaoRefMonth: new Date(),
   currentUser: null,   // { uid, username, role, canLoans }
   viewingUid: null,    // qual usuário está sendo exibido (== currentUser.uid, exceto quando admin espia outro)
   viewingUsername: null,
@@ -818,8 +825,8 @@ function daysLeftInMonth(){
 }
 function renderPrevisao(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forecast = buildForecast(recs, LOOKBACK_DAYS, daysLeftInMonth());
-  const hoje = midnight(new Date());
+  const { rangeStart, rangeEnd, hoje } = previsaoRange(state.previsaoRefMonth);
+  const forecast = buildForecast(recs, rangeStart, rangeEnd);
 
   const pendentes = forecast.filter(i=>!i.received);
   const entradaPend = pendentes.filter(i=>i.direcao!=='saida');
@@ -845,8 +852,13 @@ function renderPrevisao(){
   const inativos = recs.filter(r=>r.ativo===false);
 
   return `
+    <div class="month-nav">
+      <button class="icon-btn" id="prevMonthPrevisao">‹</button>
+      <div class="month-label">${monthLabel(state.previsaoRefMonth)}</div>
+      <button class="icon-btn" id="nextMonthPrevisao">›</button>
+    </div>
     <div class="balance-card">
-      <div class="balance-eyebrow">saldo previsto — ${monthLabel(new Date())}</div>
+      <div class="balance-eyebrow">saldo previsto — ${monthLabel(state.previsaoRefMonth)}</div>
       <div class="balance-number" style="color:${saldoPrevisto>=0?'#7FBFA6':'#D98A8E'}">${fmt(saldoPrevisto)}</div>
       <div class="balance-divider"></div>
       <div class="balance-row">
@@ -885,7 +897,7 @@ function renderPrevisao(){
         if(!nextByRec[i.recId] || i.date < nextByRec[i.recId].date) nextByRec[i.recId] = i;
       });
       const proximos = Object.values(nextByRec).sort((a,b)=> a.date < b.date ? -1 : 1);
-      if(proximos.length===0) return '<div class="empty-note">Tudo em dia — nenhuma pendência no momento.</div>';
+      if(proximos.length===0) return '<div class="empty-note">Tudo em dia — nenhuma pendência neste mês.</div>';
       return `<div class="tx-list" style="margin-bottom:28px;">
         ${proximos.map(i=>{
           const overdue = midnight(new Date(i.date+'T00:00:00')) < hoje;
@@ -1056,6 +1068,10 @@ function attachMainListeners(){
   const next = document.getElementById('nextMonth');
   if(prev) prev.onclick = () => { shiftMonth(-1); };
   if(next) next.onclick = () => { shiftMonth(1); };
+  const prevP = document.getElementById('prevMonthPrevisao');
+  const nextP = document.getElementById('nextMonthPrevisao');
+  if(prevP) prevP.onclick = () => { shiftPrevisaoMonth(-1); };
+  if(nextP) nextP.onclick = () => { shiftPrevisaoMonth(1); };
 
   const backBtn = document.getElementById('backToMine');
   if(backBtn) backBtn.onclick = () => switchViewing(state.currentUser.uid, state.currentUser.username);
@@ -1141,6 +1157,12 @@ function shiftMonth(delta){
   const d = new Date(state.refMonth);
   d.setMonth(d.getMonth()+delta);
   state.refMonth = d;
+  render();
+}
+function shiftPrevisaoMonth(delta){
+  const d = new Date(state.previsaoRefMonth);
+  d.setMonth(d.getMonth()+delta);
+  state.previsaoRefMonth = d;
   render();
 }
 
