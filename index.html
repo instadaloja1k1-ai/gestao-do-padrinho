@@ -431,7 +431,8 @@ function renderResumoCharts(){
 }
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forecast = buildForecast(recs, LOOKBACK_DAYS, FORECAST_WINDOW_DAYS);
+  const forwardDays = daysLeftInMonth();
+  const forecast = buildForecast(recs, LOOKBACK_DAYS, forwardDays);
   const pendentes = forecast.filter(i=>!i.received && i.direcao!=='saida');
   const byTipo = {};
   pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
@@ -441,9 +442,9 @@ function renderPrevisaoCharts(){
     tipoEntries.map(([,v])=>v),
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
 
-  // agrupado por semana, próximas ~5 semanas (só entradas ainda não recebidas)
+  // agrupado por semana, dentro do mês atual (só entradas ainda não recebidas)
   const hoje = midnight(new Date());
-  const numSemanas = Math.ceil(FORECAST_WINDOW_DAYS/7);
+  const numSemanas = Math.max(1, Math.ceil(forwardDays/7));
   const semanaLabels = [];
   const semanaTotais = [];
   for(let i=0;i<numSemanas;i++){
@@ -782,11 +783,15 @@ function renderLancamentos(){
 }
 
 // ---------- Previsão (dashboard de previsibilidade) ----------
-const FORECAST_WINDOW_DAYS = 30;
 const LOOKBACK_DAYS = 60;
+function daysLeftInMonth(){
+  const hoje = midnight(new Date());
+  const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth()+1, 0);
+  return Math.round((ultimoDia - hoje) / 86400000);
+}
 function renderPrevisao(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forecast = buildForecast(recs, LOOKBACK_DAYS, FORECAST_WINDOW_DAYS);
+  const forecast = buildForecast(recs, LOOKBACK_DAYS, daysLeftInMonth());
   const hoje = midnight(new Date());
 
   const pendentes = forecast.filter(i=>!i.received);
@@ -814,7 +819,7 @@ function renderPrevisao(){
 
   return `
     <div class="balance-card">
-      <div class="balance-eyebrow">saldo previsto — próximos ${FORECAST_WINDOW_DAYS} dias</div>
+      <div class="balance-eyebrow">saldo previsto — ${monthLabel(new Date())}</div>
       <div class="balance-number" style="color:${saldoPrevisto>=0?'#7FBFA6':'#D98A8E'}">${fmt(saldoPrevisto)}</div>
       <div class="balance-divider"></div>
       <div class="balance-row">
