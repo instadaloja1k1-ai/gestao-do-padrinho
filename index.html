@@ -340,7 +340,7 @@ function nextOccurrences(rec, lookbackDays, forwardDays){
       const d = addMonths(inicio, i);
       const dateStr = toISO(d);
       if(!recebidas.includes(dateStr)){
-        out.push({ date: dateStr, parcelaNum: i+1 });
+        if(d <= rangeEnd) out.push({ date: dateStr, parcelaNum: i+1 }); // só entra se já venceu ou vence até o fim da janela vista
         break; // só a parcela atual pendente — nunca acumula parcelas atrasadas
       }
     }
