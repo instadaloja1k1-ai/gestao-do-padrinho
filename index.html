@@ -806,25 +806,32 @@ function renderPrevisao(){
     <div class="section-title">previsão por semana</div>
     <div class="chart-wrap"><canvas id="chartPrevisaoSemanal"></canvas></div>
 
-    <div class="section-title">linha do tempo</div>
-    ${forecast.length===0 ? '<div class="empty-note">Nada previsto para o período.</div>' : `
-    <div class="tx-list" style="margin-bottom:28px;">
-      ${forecast.map(i=>{
-        const overdue = !i.received && midnight(new Date(i.date+'T00:00:00')) < hoje;
-        const pillClass = i.received ? 'alugado' : (overdue ? 'manutencao' : 'disponivel');
-        const pillLabel = i.received ? 'Recebido' : (overdue ? 'Atrasado' : 'Pendente');
-        return `
-        <div class="tx-row">
-          <div class="tx-dot" style="background:${TIPOS_RECEITA[i.tipo].color}"></div>
-          <div class="tx-info">
-            <div class="tx-desc">${escapeHtml(i.descricao) || TIPOS_RECEITA[i.tipo].label}${i.parcelaNum ? ` (parcela ${i.parcelaNum}/${i.parcelasTotal})` : ''}</div>
-            <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+    <div class="section-title">pendências</div>
+    ${(() => {
+      const nextByRec = {};
+      pendentes.forEach(i=>{
+        if(!nextByRec[i.recId] || i.date < nextByRec[i.recId].date) nextByRec[i.recId] = i;
+      });
+      const proximos = Object.values(nextByRec).sort((a,b)=> a.date < b.date ? -1 : 1);
+      if(proximos.length===0) return '<div class="empty-note">Tudo em dia — nenhuma pendência no momento.</div>';
+      return `<div class="tx-list" style="margin-bottom:28px;">
+        ${proximos.map(i=>{
+          const overdue = midnight(new Date(i.date+'T00:00:00')) < hoje;
+          const pillClass = overdue ? 'manutencao' : 'disponivel';
+          const pillLabel = overdue ? 'Atrasado' : 'Pendente';
+          return `
+          <div class="tx-row">
+            <div class="tx-dot" style="background:${TIPOS_RECEITA[i.tipo].color}"></div>
+            <div class="tx-info">
+              <div class="tx-desc">${escapeHtml(i.descricao) || TIPOS_RECEITA[i.tipo].label}${i.parcelaNum ? ` (parcela ${i.parcelaNum}/${i.parcelasTotal})` : ''}</div>
+              <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+            </div>
+            <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+            <span class="status-pill ${pillClass}" data-toggle-occ="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}" data-occ-received="false">${pillLabel}</span>
           </div>
-          <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
-          <span class="status-pill ${pillClass}" data-toggle-occ="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}" data-occ-received="${i.received}">${pillLabel}</span>
-        </div>
-      `;}).join('')}
-    </div>`}
+        `;}).join('')}
+      </div>`;
+    })()}
 
     <div class="section-title">fontes cadastradas</div>
     ${ativos.length===0 && inativos.length===0 ? '<div class="empty-note">Nenhuma fonte cadastrada ainda.</div>' : ''}
