@@ -556,7 +556,7 @@ auth.onAuthStateChanged(async (user) => {
     }
     const isAdmin = (profile.role || 'user') === 'admin';
     const canLoans = isAdmin ? true : profile.canLoans === true;
-    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user', canLoans };
+    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user', canLoans, tenantId: profile.tenantId || user.uid };
     state.viewingUid = user.uid;
     state.viewingUsername = profile.username;
     document.getElementById('tabUsuarios').style.display = isAdmin ? '' : 'none';
@@ -610,7 +610,7 @@ function attachDataListeners(uid){
 
 function attachUsersListener(){
   if(state.unsubUsers) state.unsubUsers();
-  state.unsubUsers = db.collection('users').onSnapshot(qs => {
+  state.unsubUsers = db.collection('users').where('tenantId', '==', state.currentUser.tenantId).onSnapshot(qs => {
     state.allUsers = qs.docs.map(d => ({ uid: d.id, ...d.data() }));
     if(state.tab === 'usuarios') render();
   }, err => showError('Erro ao carregar usuários: '+err.message));
@@ -1709,7 +1709,7 @@ function openAddUserForm(){
       secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
       const cred = await secondaryApp.auth().createUserWithEmailAndPassword(usernameToEmail(username), password);
       await db.collection('users').doc(cred.user.uid).set({
-        username, role, active: true, canLoans: false, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        username, role, active: true, canLoans: false, tenantId: state.currentUser.tenantId, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       await secondaryApp.auth().signOut();
       overlay.remove();
