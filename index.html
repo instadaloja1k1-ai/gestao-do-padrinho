@@ -14,13 +14,13 @@
 <link rel="icon" href="icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#0F1419; --surface:#161C24; --surface2:#1A2129; --border:#2A323C;
     --text:#E8E6E1; --muted:#889099; --dim:#6B7480;
     --gold:#C9A15A; --green:#7FBFA6; --red:#D98A8E;
-    --font-display: 'Playfair Display', Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
+    --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   }
@@ -186,6 +186,7 @@
     <button class="tab-btn" data-tab="resumo"><span class="ic">◐</span><span class="tab-label">Resumo</span></button>
     <button class="tab-btn" data-tab="lancamentos"><span class="ic">≡</span><span class="tab-label">Lançamentos</span></button>
     <button class="tab-btn" data-tab="previsao"><span class="ic">◈</span><span class="tab-label">Previsão</span></button>
+    <button class="tab-btn" data-tab="frota"><span class="ic">🚗</span><span class="tab-label">Frota</span></button>
     <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic">%</span><span class="tab-label">Empréstimos</span></button>
     <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic">☺</span><span class="tab-label">Usuários</span></button>
   </nav>
@@ -642,6 +643,7 @@ function render(){
   if(state.tab === 'resumo') mainEl.innerHTML = banner + renderResumo();
   else if(state.tab === 'lancamentos') mainEl.innerHTML = banner + renderLancamentos();
   else if(state.tab === 'previsao') mainEl.innerHTML = banner + renderPrevisao();
+  else if(state.tab === 'frota') mainEl.innerHTML = banner + renderFrota();
   else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + renderEmprestimos();
   else mainEl.innerHTML = renderUsuarios();
   attachMainListeners();
@@ -803,12 +805,12 @@ function renderPrevisao(){
     ${ativos.length===0 && inativos.length===0 ? '<div class="empty-note">Nenhuma fonte cadastrada ainda.</div>' : ''}
     ${ativos.map(recCardHtml).join('')}
     ${inativos.length>0 ? inativos.map(recCardHtml).join('') : ''}
-
-    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
-      <span>sua frota</span>
-      <button class="small-btn" id="openAddVehicle">+ carro</button>
-    </div>
-    ${state.data.vehicles.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda.</div>' : state.data.vehicles.map(vehicleCardHtml).join('')}
+  `;
+}
+function renderFrota(){
+  return `
+    <div class="section-title">sua frota</div>
+    ${state.data.vehicles.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : state.data.vehicles.map(vehicleCardHtml).join('')}
   `;
 }
 function vehicleCardHtml(v){
@@ -1009,6 +1011,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 fabBtn.addEventListener('click', ()=>{
   if(state.tab === 'emprestimos') openLoanForm();
   else if(state.tab === 'previsao') openRecurrenceForm();
+  else if(state.tab === 'frota') openVehicleForm();
   else if(state.tab !== 'usuarios') openTxForm();
 });
 
