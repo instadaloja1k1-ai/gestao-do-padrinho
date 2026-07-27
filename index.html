@@ -31,7 +31,7 @@
   header{display:flex;align-items:center;justify-content:space-between;
     padding:calc(env(safe-area-inset-top) + 18px) 20px 14px;border-bottom:1px solid #1F2730;}
   .eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;}
-  .brand{font-family:var(--font-display);font-size:25px;font-weight:700;margin-top:2px;letter-spacing:.01em;}
+  .brand{font-family:var(--font-display);font-size:25px;font-weight:700;margin-top:2px;letter-spacing:.01em;text-transform:uppercase;}
   main{flex:1;padding:16px 20px 110px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   .month-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:18px;}
   .month-label{font-family:var(--font-mono);font-size:13px;letter-spacing:.04em;color:#B8BEC7;
@@ -176,7 +176,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       <button class="icon-btn" id="logoutBtn" title="Sair" style="display:none;">⏻</button>
-      <div style="font-size:24px;">🥷🏿</div>
+      <div style="font-size:24px;">🥷🏿💰</div>
     </div>
   </header>
   <div id="errorBanner" class="error-banner" style="display:none;"></div>
@@ -1040,6 +1040,10 @@ function renderUsuarios(){
             <div class="toggle ${u.canLoans===true ? 'on':''}" data-toggle-loans="${u.uid}" data-current="${u.canLoans===true}"><div class="toggle-dot"></div></div>
           </div>
         </div>`}
+        ${u.uid !== state.currentUser.uid ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid #1A2129;display:flex;justify-content:flex-end;">
+          <button class="trash-btn-loan" data-delete-user="${u.uid}" data-delete-username="${escapeHtml(u.username||'')}">✕ remover usuário</button>
+        </div>` : ''}
       </div>
     `;}).join('')}
     <button class="save-btn" id="openAddUser" style="margin-top:10px;">+ Adicionar usuário</button>
@@ -1128,6 +1132,9 @@ function attachMainListeners(){
   });
   const addUserBtn = document.getElementById('openAddUser');
   if(addUserBtn) addUserBtn.onclick = openAddUserForm;
+  document.querySelectorAll('[data-delete-user]').forEach(btn=>{
+    btn.onclick = () => removeUserAccount(btn.getAttribute('data-delete-user'), btn.getAttribute('data-delete-username'));
+  });
 }
 
 function shiftMonth(delta){
@@ -1653,6 +1660,13 @@ function openMarkPaidForm(loanId){
 }
 
 // ---------- Adicionar usuário (admin) ----------
+function removeUserAccount(uid, username){
+  if(!confirm(`Remover o acesso de "${username || 'este usuário'}"? Isso remove o cadastro dele do app e ele não vai mais conseguir entrar. Essa ação não pode ser desfeita.`)) return;
+  db.collection('users').doc(uid).delete()
+    .then(()=> showToast('Usuário removido.'))
+    .catch(e=>showError('Erro ao remover usuário: '+e.message));
+}
+
 function openAddUserForm(){
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
