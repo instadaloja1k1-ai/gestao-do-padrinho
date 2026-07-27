@@ -263,6 +263,10 @@ const TIPOS_RECEITA = {
   outro:    { label: 'Outro',                 color: '#B8BEC7' },
 };
 const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+function tipoInfo(item){
+  if(item.direcao === 'saida') return { label: item.categoria || 'Gasto fixo', color: '#D98A8E' };
+  return TIPOS_RECEITA[item.tipo] || TIPOS_RECEITA.outro;
+}
 
 // ---------- loan helpers ----------
 function normalizeLoan(l){
@@ -303,6 +307,7 @@ function normalizeRecurrence(r){
     tipo: 'outro', descricao: '', valor: 0, frequencia: 'semanal',
     diaSemana: 1, diaMes: 1, dataInicio: todayISO(),
     parcelasTotal: null, ativo: true, receivedDates: [],
+    direcao: 'entrada', categoria: '',
   }, r);
 }
 // gera as ocorrências de uma recorrência dentro de uma janela [hoje-lookbackDays, hoje+forwardDays]
@@ -355,6 +360,8 @@ function buildForecast(recurrences, lookbackDays, forwardDays){
         parcelaNum: occ.parcelaNum,
         parcelasTotal: rec.parcelasTotal,
         received: (rec.receivedDates||[]).includes(occ.date),
+        direcao: rec.direcao,
+        categoria: rec.categoria,
       });
     });
   });
@@ -425,7 +432,7 @@ function renderResumoCharts(){
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
   const forecast = buildForecast(recs, LOOKBACK_DAYS, FORECAST_WINDOW_DAYS);
-  const pendentes = forecast.filter(i=>!i.received);
+  const pendentes = forecast.filter(i=>!i.received && i.direcao!=='saida');
   const byTipo = {};
   pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
   const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
@@ -434,7 +441,7 @@ function renderPrevisaoCharts(){
     tipoEntries.map(([,v])=>v),
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
 
-  // agrupado por semana, próximas ~5 semanas (só o que ainda não foi recebido)
+  // agrupado por semana, próximas ~5 semanas (só entradas ainda não recebidas)
   const hoje = midnight(new Date());
   const numSemanas = Math.ceil(FORECAST_WINDOW_DAYS/7);
   const semanaLabels = [];
@@ -633,15 +640,22 @@ function toggleOccurrence(recId, date, valor, currentlyReceived){
     : firebase.firestore.FieldValue.arrayUnion(date);
   dataCol('recurrences').doc(recId).update({ receivedDates: op })
     .catch(e=>showError('Erro ao atualizar: '+e.message));
+  const isSaida = rec.direcao === 'saida';
   if(!currentlyReceived){
-    addTransaction({
+    addTransaction(isSaida ? {
+      type: 'expense',
+      description: rec.descricao || rec.categoria || 'Gasto fixo',
+      amount: valor,
+      category: rec.categoria || 'Outros',
+      date,
+    } : {
       type: 'income',
       description: rec.descricao || TIPOS_RECEITA[rec.tipo].label,
       amount: valor,
       category: 'Rendimentos',
       date,
     });
-    showToast(`✓ ${fmt(valor)} marcado como recebido`);
+    showToast(isSaida ? `✓ ${fmt(valor)} marcado como pago` : `✓ ${fmt(valor)} marcado como recebido`);
   }else{
     showToast('Marcado como pendente novamente');
   }
@@ -776,13 +790,22 @@ function renderPrevisao(){
   const hoje = midnight(new Date());
 
   const pendentes = forecast.filter(i=>!i.received);
-  const atrasados = pendentes.filter(i=> midnight(new Date(i.date+'T00:00:00')) < hoje);
-  const futuros = pendentes.filter(i=> midnight(new Date(i.date+'T00:00:00')) >= hoje);
-  const totalFuturo = futuros.reduce((s,i)=>s+i.valor,0);
-  const totalAtrasado = atrasados.reduce((s,i)=>s+i.valor,0);
+  const entradaPend = pendentes.filter(i=>i.direcao!=='saida');
+  const saidaPend = pendentes.filter(i=>i.direcao==='saida');
+
+  const entradaAtrasada = entradaPend.filter(i=> midnight(new Date(i.date+'T00:00:00')) < hoje);
+  const entradaFutura = entradaPend.filter(i=> midnight(new Date(i.date+'T00:00:00')) >= hoje);
+  const saidaAtrasada = saidaPend.filter(i=> midnight(new Date(i.date+'T00:00:00')) < hoje);
+  const saidaFutura = saidaPend.filter(i=> midnight(new Date(i.date+'T00:00:00')) >= hoje);
+
+  const totalEntradaFutura = entradaFutura.reduce((s,i)=>s+i.valor,0);
+  const totalEntradaAtrasada = entradaAtrasada.reduce((s,i)=>s+i.valor,0);
+  const totalSaidaFutura = saidaFutura.reduce((s,i)=>s+i.valor,0);
+  const totalSaidaAtrasada = saidaAtrasada.reduce((s,i)=>s+i.valor,0);
+  const saldoPrevisto = totalEntradaFutura - totalSaidaFutura;
 
   const byTipo = {};
-  pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
+  entradaPend.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
   const maxTipo = Math.max(1, ...Object.values(byTipo));
   const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
 
@@ -791,9 +814,21 @@ function renderPrevisao(){
 
   return `
     <div class="balance-card">
-      <div class="balance-eyebrow">pendente para os próximos ${FORECAST_WINDOW_DAYS} dias</div>
-      <div class="balance-number" style="color:var(--gold)">${fmt(totalFuturo)}</div>
-      ${totalAtrasado>0 ? `<div class="empty-note" style="color:var(--red);padding-top:10px;">⚠ ${fmt(totalAtrasado)} em pendências atrasadas</div>` : ''}
+      <div class="balance-eyebrow">saldo previsto — próximos ${FORECAST_WINDOW_DAYS} dias</div>
+      <div class="balance-number" style="color:${saldoPrevisto>=0?'#7FBFA6':'#D98A8E'}">${fmt(saldoPrevisto)}</div>
+      <div class="balance-divider"></div>
+      <div class="balance-row">
+        <div class="balance-col">
+          <span class="balance-col-label">↑ Entradas pendentes</span>
+          <span class="balance-col-value" style="color:#7FBFA6">${fmt(totalEntradaFutura)}</span>
+        </div>
+        <div class="balance-col-divider"></div>
+        <div class="balance-col">
+          <span class="balance-col-label">↓ Saídas pendentes</span>
+          <span class="balance-col-value" style="color:#D98A8E">${fmt(totalSaidaFutura)}</span>
+        </div>
+      </div>
+      ${(totalEntradaAtrasada>0 || totalSaidaAtrasada>0) ? `<div class="empty-note" style="color:var(--red);padding-top:14px;">⚠ ${totalEntradaAtrasada>0?`${fmt(totalEntradaAtrasada)} a receber atrasado`:''}${(totalEntradaAtrasada>0&&totalSaidaAtrasada>0)?' · ':''}${totalSaidaAtrasada>0?`${fmt(totalSaidaAtrasada)} a pagar atrasado`:''}</div>` : ''}
     </div>
 
     <div class="section-title">por tipo de entrada (pendente)</div>
@@ -822,16 +857,18 @@ function renderPrevisao(){
       return `<div class="tx-list" style="margin-bottom:28px;">
         ${proximos.map(i=>{
           const overdue = midnight(new Date(i.date+'T00:00:00')) < hoje;
+          const isSaida = i.direcao === 'saida';
           const pillClass = overdue ? 'manutencao' : 'disponivel';
-          const pillLabel = overdue ? 'Atrasado' : 'Pendente';
+          const pillLabel = overdue ? 'Atrasado' : (isSaida ? 'A pagar' : 'Pendente');
+          const info = tipoInfo(i);
           return `
           <div class="tx-row">
-            <div class="tx-dot" style="background:${TIPOS_RECEITA[i.tipo].color}"></div>
+            <div class="tx-dot" style="background:${info.color}"></div>
             <div class="tx-info">
-              <div class="tx-desc">${escapeHtml(i.descricao) || TIPOS_RECEITA[i.tipo].label}${i.parcelaNum ? ` (parcela ${i.parcelaNum}/${i.parcelasTotal})` : ''}</div>
-              <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+              <div class="tx-desc">${escapeHtml(i.descricao) || info.label}${i.parcelaNum ? ` (parcela ${i.parcelaNum}/${i.parcelasTotal})` : ''}</div>
+              <div class="tx-meta">${info.label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
             </div>
-            <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+            <div class="tx-amount" style="color:${isSaida?'var(--red)':'var(--green)'}">${isSaida?'-':'+'} ${fmt(i.valor)}</div>
             <span class="status-pill ${pillClass}" data-toggle-occ="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}" data-occ-received="false">${pillLabel}</span>
           </div>
         `;}).join('')}
@@ -870,12 +907,14 @@ function recCardHtml(r){
     : r.frequencia === 'mensal' ? `Todo dia ${r.diaMes}`
     : `Parcelado (${(r.receivedDates||[]).length}/${r.parcelasTotal} pagas)`;
   const veiculo = r.veiculoId ? state.data.vehicles.find(v=>v.id===r.veiculoId) : null;
+  const info = tipoInfo(r);
+  const isSaida = r.direcao === 'saida';
   return `
     <div class="rec-card" style="opacity:${r.ativo===false?0.5:1}">
       <div class="rec-card-top">
         <div>
-          <div class="rec-desc">${escapeHtml(r.descricao) || TIPOS_RECEITA[r.tipo].label}</div>
-          <div class="rec-meta">${TIPOS_RECEITA[r.tipo].label}${veiculo ? ` · ${escapeHtml(veiculo.placa||veiculo.modelo)}` : ''} · ${freqLabel} · ${fmt(r.valor)}</div>
+          <div class="rec-desc">${escapeHtml(r.descricao) || info.label}</div>
+          <div class="rec-meta">${info.label}${veiculo ? ` · ${escapeHtml(veiculo.placa||veiculo.modelo)}` : ''} · ${freqLabel} · ${isSaida?'-':'+'} ${fmt(r.valor)}</div>
         </div>
         <div class="toggle ${r.ativo!==false?'on':''}" data-toggle-rec="${r.id}" data-current="${r.ativo!==false}"><div class="toggle-dot"></div></div>
       </div>
@@ -1135,8 +1174,18 @@ function openRecurrenceForm(){
         <div class="sheet-title">Nova fonte de renda</div>
         <button class="icon-btn" id="closeRecForm">✕</button>
       </div>
-      <label class="field-label">Tipo</label>
-      <select id="recTipo">${tipoOptions}</select>
+      <div class="segmented">
+        <button type="button" class="seg-btn active-income" id="segEntrada">Entrada</button>
+        <button type="button" class="seg-btn" id="segSaida">Saída (gasto fixo)</button>
+      </div>
+      <div id="tipoField">
+        <label class="field-label">Tipo</label>
+        <select id="recTipo">${tipoOptions}</select>
+      </div>
+      <div id="categoriaField" style="display:none;">
+        <label class="field-label">Categoria do gasto</label>
+        <select id="recCategoria">${CATS_EXPENSE.map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
+      </div>
       <div id="veiculoField" style="display:none;">
         <label class="field-label">Carro</label>
         <select id="recVeiculo"><option value="">(nenhum específico)</option>${state.data.vehicles.map(v=>`<option value="${v.id}">${escapeHtml(v.modelo)}${v.placa?` — ${escapeHtml(v.placa)}`:''}</option>`).join('')}</select>
@@ -1176,11 +1225,30 @@ function openRecurrenceForm(){
   `;
   document.body.appendChild(overlay);
 
+  let direcao = 'entrada';
+  const tipoField = overlay.querySelector('#tipoField');
+  const categoriaField = overlay.querySelector('#categoriaField');
   const veiculoField = overlay.querySelector('#veiculoField');
   const recTipoSelect = overlay.querySelector('#recTipo');
-  function syncVeiculoField(){ veiculoField.style.display = (recTipoSelect.value === 'frota') ? '' : 'none'; }
+  const segEntrada = overlay.querySelector('#segEntrada');
+  const segSaida = overlay.querySelector('#segSaida');
+  const sheetTitle = overlay.querySelector('.sheet-title');
+  const saveBtnLabel = () => saveBtn.textContent = direcao==='saida' ? 'Salvar gasto fixo' : 'Salvar fonte de renda';
+
+  function syncVeiculoField(){ veiculoField.style.display = (direcao==='entrada' && recTipoSelect.value === 'frota') ? '' : 'none'; }
+  function setDirecao(d){
+    direcao = d;
+    segEntrada.classList.toggle('active-income', d==='entrada');
+    segSaida.classList.toggle('active-expense', d==='saida');
+    tipoField.style.display = d==='entrada' ? '' : 'none';
+    categoriaField.style.display = d==='saida' ? '' : 'none';
+    sheetTitle.textContent = d==='saida' ? 'Novo gasto fixo' : 'Nova fonte de renda';
+    saveBtnLabel();
+    syncVeiculoField();
+  }
+  segEntrada.onclick = () => setDirecao('entrada');
+  segSaida.onclick = () => setDirecao('saida');
   recTipoSelect.onchange = syncVeiculoField;
-  syncVeiculoField();
 
   let frequencia = 'semanal';
   const semanalFields = overlay.querySelector('#semanalFields');
@@ -1205,6 +1273,7 @@ function openRecurrenceForm(){
   const valorInput = overlay.querySelector('#recValor');
   const parcelasTotalInput = overlay.querySelector('#recParcelasTotal');
   const saveBtn = overlay.querySelector('#recSave');
+  setDirecao('entrada');
   function validate(){
     const v = parseFloat(valorInput.value.replace(',','.'));
     let ok = v > 0;
@@ -1223,14 +1292,16 @@ function openRecurrenceForm(){
     const valor = parseFloat(valorInput.value.replace(',','.'));
     if(!(valor>0)) return;
     const rec = {
-      tipo: overlay.querySelector('#recTipo').value,
+      direcao,
+      tipo: direcao==='entrada' ? overlay.querySelector('#recTipo').value : 'outro',
+      categoria: direcao==='saida' ? overlay.querySelector('#recCategoria').value : '',
       descricao: overlay.querySelector('#recDesc').value.trim(),
       valor,
       frequencia,
       dataInicio: overlay.querySelector('#recDataInicio').value || todayISO(),
       ativo: true,
     };
-    if(rec.tipo === 'frota'){
+    if(direcao==='entrada' && rec.tipo === 'frota'){
       const vId = overlay.querySelector('#recVeiculo').value;
       if(vId) rec.veiculoId = vId;
     }
