@@ -302,48 +302,45 @@ function normalizeRecurrence(r){
   return Object.assign({
     tipo: 'outro', descricao: '', valor: 0, frequencia: 'semanal',
     diaSemana: 1, diaMes: 1, dataInicio: todayISO(),
-    parcelasTotal: null, parcelasPagas: 0, ativo: true,
+    parcelasTotal: null, ativo: true, receivedDates: [],
   }, r);
 }
-// gera as próximas ocorrências de uma recorrência dentro de uma janela [hoje, hoje+diasJanela]
-function nextOccurrences(rec, diasJanela){
+// gera as ocorrências de uma recorrência dentro de uma janela [hoje-lookbackDays, hoje+forwardDays]
+function nextOccurrences(rec, lookbackDays, forwardDays){
   if(rec.ativo === false) return [];
   const hoje = midnight(new Date());
-  const limite = addDays(hoje, diasJanela);
+  const rangeStart = addDays(hoje, -lookbackDays);
+  const rangeEnd = addDays(hoje, forwardDays);
   const inicio = midnight(new Date(rec.dataInicio+'T00:00:00'));
   const out = [];
 
   if(rec.frequencia === 'semanal'){
-    let cursor = new Date(hoje);
+    let cursor = new Date(inicio);
     while(cursor.getDay() !== Number(rec.diaSemana)) cursor = addDays(cursor, 1);
-    if(cursor < inicio) cursor = new Date(inicio);
-    while(cursor <= limite){
-      if(cursor >= hoje) out.push({ date: toISO(cursor) });
+    while(cursor <= rangeEnd){
+      if(cursor >= rangeStart) out.push({ date: toISO(cursor) });
       cursor = addDays(cursor, 7);
     }
   }else if(rec.frequencia === 'mensal'){
-    let cursor = new Date(hoje.getFullYear(), hoje.getMonth(), Math.min(rec.diaMes, 28));
-    if(cursor < hoje) cursor = addMonths(cursor, 1);
-    if(cursor < inicio) cursor = new Date(inicio);
-    while(cursor <= limite){
-      if(cursor >= hoje) out.push({ date: toISO(cursor) });
+    let cursor = new Date(inicio.getFullYear(), inicio.getMonth(), Math.min(rec.diaMes, 28));
+    if(cursor < inicio) cursor = addMonths(cursor, 1);
+    while(cursor <= rangeEnd){
+      if(cursor >= rangeStart) out.push({ date: toISO(cursor) });
       cursor = addMonths(cursor, 1);
     }
   }else if(rec.frequencia === 'parcelas'){
-    const restantes = Math.max(0, (rec.parcelasTotal||0) - (rec.parcelasPagas||0));
-    let cursor = new Date(inicio);
-    cursor = addMonths(cursor, rec.parcelasPagas||0);
-    for(let i=0; i<restantes; i++){
-      if(cursor >= hoje && cursor <= limite) out.push({ date: toISO(cursor), parcelaNum: (rec.parcelasPagas||0)+i+1 });
-      cursor = addMonths(cursor, 1);
+    const total = rec.parcelasTotal||0;
+    for(let i=0;i<total;i++){
+      const d = addMonths(inicio, i);
+      if(d >= rangeStart && d <= rangeEnd) out.push({ date: toISO(d), parcelaNum: i+1 });
     }
   }
   return out;
 }
-function buildForecast(recurrences, diasJanela){
+function buildForecast(recurrences, lookbackDays, forwardDays){
   const items = [];
   recurrences.map(normalizeRecurrence).forEach(rec => {
-    nextOccurrences(rec, diasJanela).forEach(occ => {
+    nextOccurrences(rec, lookbackDays, forwardDays).forEach(occ => {
       items.push({
         date: occ.date,
         tipo: rec.tipo,
@@ -352,6 +349,7 @@ function buildForecast(recurrences, diasJanela){
         recId: rec.id,
         parcelaNum: occ.parcelaNum,
         parcelasTotal: rec.parcelasTotal,
+        received: (rec.receivedDates||[]).includes(occ.date),
       });
     });
   });
@@ -421,16 +419,17 @@ function renderResumoCharts(){
 }
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forecast = buildForecast(recs, FORECAST_WINDOW_DAYS);
+  const forecast = buildForecast(recs, LOOKBACK_DAYS, FORECAST_WINDOW_DAYS);
+  const pendentes = forecast.filter(i=>!i.received);
   const byTipo = {};
-  forecast.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
+  pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
   const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
   makeDoughnut('chartPrevisaoTipo',
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].label),
     tipoEntries.map(([,v])=>v),
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
 
-  // agrupado por semana, próximas ~5 semanas
+  // agrupado por semana, próximas ~5 semanas (só o que ainda não foi recebido)
   const hoje = midnight(new Date());
   const numSemanas = Math.ceil(FORECAST_WINDOW_DAYS/7);
   const semanaLabels = [];
@@ -438,7 +437,7 @@ function renderPrevisaoCharts(){
   for(let i=0;i<numSemanas;i++){
     const inicioSemana = addDays(hoje, i*7);
     const fimSemana = addDays(hoje, i*7+6);
-    const total = forecast.filter(f=>{
+    const total = pendentes.filter(f=>{
       const d = midnight(new Date(f.date+'T00:00:00'));
       return d >= inicioSemana && d <= fimSemana;
     }).reduce((s,f)=>s+f.valor,0);
@@ -621,20 +620,26 @@ function deleteRecurrence(id){ return dataCol('recurrences').doc(id).delete().ca
 function addVehicle(v){ return dataCol('vehicles').add(v).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateVehicle(id, patch){ return dataCol('vehicles').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteVehicle(id){ return dataCol('vehicles').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
-function markForecastReceived(recId, date, valor){
+function toggleOccurrence(recId, date, valor, currentlyReceived){
   const rec = state.data.recurrences.find(r=>r.id===recId);
   if(!rec) return;
-  addTransaction({
-    type: 'income',
-    description: rec.descricao || TIPOS_RECEITA[rec.tipo].label,
-    amount: valor,
-    category: 'Rendimentos',
-    date,
-  });
-  if(rec.frequencia === 'parcelas'){
-    updateRecurrence(recId, { parcelasPagas: (rec.parcelasPagas||0)+1 });
+  const op = currentlyReceived
+    ? firebase.firestore.FieldValue.arrayRemove(date)
+    : firebase.firestore.FieldValue.arrayUnion(date);
+  dataCol('recurrences').doc(recId).update({ receivedDates: op })
+    .catch(e=>showError('Erro ao atualizar: '+e.message));
+  if(!currentlyReceived){
+    addTransaction({
+      type: 'income',
+      description: rec.descricao || TIPOS_RECEITA[rec.tipo].label,
+      amount: valor,
+      category: 'Rendimentos',
+      date,
+    });
+    showToast(`✓ ${fmt(valor)} marcado como recebido`);
+  }else{
+    showToast('Marcado como pendente novamente');
   }
-  showToast(`✓ ${fmt(valor)} lançado em Lançamentos`);
 }
 
 // =====================================================================
@@ -759,13 +764,20 @@ function renderLancamentos(){
 
 // ---------- Previsão (dashboard de previsibilidade) ----------
 const FORECAST_WINDOW_DAYS = 30;
+const LOOKBACK_DAYS = 60;
 function renderPrevisao(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const forecast = buildForecast(recs, FORECAST_WINDOW_DAYS);
+  const forecast = buildForecast(recs, LOOKBACK_DAYS, FORECAST_WINDOW_DAYS);
+  const hoje = midnight(new Date());
 
-  const totalPrevisto = forecast.reduce((s,i)=>s+i.valor,0);
+  const pendentes = forecast.filter(i=>!i.received);
+  const atrasados = pendentes.filter(i=> midnight(new Date(i.date+'T00:00:00')) < hoje);
+  const futuros = pendentes.filter(i=> midnight(new Date(i.date+'T00:00:00')) >= hoje);
+  const totalFuturo = futuros.reduce((s,i)=>s+i.valor,0);
+  const totalAtrasado = atrasados.reduce((s,i)=>s+i.valor,0);
+
   const byTipo = {};
-  forecast.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
+  pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
   const maxTipo = Math.max(1, ...Object.values(byTipo));
   const tipoEntries = Object.entries(byTipo).sort((a,b)=>b[1]-a[1]);
 
@@ -774,12 +786,13 @@ function renderPrevisao(){
 
   return `
     <div class="balance-card">
-      <div class="balance-eyebrow">previsto para os próximos ${FORECAST_WINDOW_DAYS} dias</div>
-      <div class="balance-number" style="color:var(--gold)">${fmt(totalPrevisto)}</div>
+      <div class="balance-eyebrow">pendente para os próximos ${FORECAST_WINDOW_DAYS} dias</div>
+      <div class="balance-number" style="color:var(--gold)">${fmt(totalFuturo)}</div>
+      ${totalAtrasado>0 ? `<div class="empty-note" style="color:var(--red);padding-top:10px;">⚠ ${fmt(totalAtrasado)} em pendências atrasadas</div>` : ''}
     </div>
 
-    <div class="section-title">por tipo de entrada</div>
-    ${tipoEntries.length===0 ? '<div class="empty-note">Nenhuma entrada prevista. Toque em + para cadastrar uma fonte de renda recorrente.</div>' : `
+    <div class="section-title">por tipo de entrada (pendente)</div>
+    ${tipoEntries.length===0 ? '<div class="empty-note">Nenhuma entrada pendente. Toque em + para cadastrar uma fonte de renda recorrente.</div>' : `
     <div class="chart-wrap"><canvas id="chartPrevisaoTipo"></canvas></div>
     <div class="cat-list">
       ${tipoEntries.map(([tipo,val])=>`
@@ -796,7 +809,11 @@ function renderPrevisao(){
     <div class="section-title">linha do tempo</div>
     ${forecast.length===0 ? '<div class="empty-note">Nada previsto para o período.</div>' : `
     <div class="tx-list" style="margin-bottom:28px;">
-      ${forecast.map(i=>`
+      ${forecast.map(i=>{
+        const overdue = !i.received && midnight(new Date(i.date+'T00:00:00')) < hoje;
+        const pillClass = i.received ? 'alugado' : (overdue ? 'manutencao' : 'disponivel');
+        const pillLabel = i.received ? 'Recebido' : (overdue ? 'Atrasado' : 'Pendente');
+        return `
         <div class="tx-row">
           <div class="tx-dot" style="background:${TIPOS_RECEITA[i.tipo].color}"></div>
           <div class="tx-info">
@@ -804,9 +821,9 @@ function renderPrevisao(){
             <div class="tx-meta">${TIPOS_RECEITA[i.tipo].label} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
           </div>
           <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
-          <button class="small-btn" data-mark-received="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}">recebido</button>
+          <span class="status-pill ${pillClass}" data-toggle-occ="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}" data-occ-received="${i.received}">${pillLabel}</span>
         </div>
-      `).join('')}
+      `;}).join('')}
     </div>`}
 
     <div class="section-title">fontes cadastradas</div>
@@ -839,7 +856,7 @@ function vehicleCardHtml(v){
 function recCardHtml(r){
   const freqLabel = r.frequencia === 'semanal' ? `Toda ${DIAS_SEMANA[r.diaSemana].toLowerCase()}`
     : r.frequencia === 'mensal' ? `Todo dia ${r.diaMes}`
-    : `Parcelado (${r.parcelasPagas||0}/${r.parcelasTotal} pagas)`;
+    : `Parcelado (${(r.receivedDates||[]).length}/${r.parcelasTotal} pagas)`;
   const veiculo = r.veiculoId ? state.data.vehicles.find(v=>v.id===r.veiculoId) : null;
   return `
     <div class="rec-card" style="opacity:${r.ativo===false?0.5:1}">
@@ -954,14 +971,14 @@ function attachMainListeners(){
       updateRecurrence(id, { ativo: !current });
     };
   });
-  document.querySelectorAll('[data-mark-received]').forEach(btn=>{
-    btn.onclick = () => {
-      btn.disabled = true;
-      btn.textContent = '✓ ok';
-      markForecastReceived(
-        btn.getAttribute('data-mark-received'),
-        btn.getAttribute('data-occ-date'),
-        parseFloat(btn.getAttribute('data-occ-valor'))
+  document.querySelectorAll('[data-toggle-occ]').forEach(el=>{
+    el.onclick = () => {
+      const received = el.getAttribute('data-occ-received') === 'true';
+      toggleOccurrence(
+        el.getAttribute('data-toggle-occ'),
+        el.getAttribute('data-occ-date'),
+        parseFloat(el.getAttribute('data-occ-valor')),
+        received
       );
     };
   });
@@ -1213,7 +1230,13 @@ function openRecurrenceForm(){
       const pt = parseInt(parcelasTotalInput.value, 10);
       if(!(pt>0)) return;
       rec.parcelasTotal = pt;
-      rec.parcelasPagas = parseInt(overlay.querySelector('#recParcelasPagas').value, 10) || 0;
+      const jaPagas = parseInt(overlay.querySelector('#recParcelasPagas').value, 10) || 0;
+      const inicioDate = midnight(new Date(rec.dataInicio+'T00:00:00'));
+      const seeded = [];
+      for(let i=0; i<Math.min(jaPagas, pt); i++){
+        seeded.push(toISO(addMonths(inicioDate, i)));
+      }
+      rec.receivedDates = seeded;
     }
     addRecurrence(rec);
     overlay.remove();
