@@ -674,10 +674,10 @@ state.data = {
     { id:'l3', borrower:'Cliente C', calcMode:'rate', principal:500, rate:4, compound:false, startDate:'2026-04-01', status:'paid', paidDate:'2026-05-01' },
   ],
   recurrences: [
-    { id:'r1', tipo:'frota', direcao:'entrada', descricao:'Aluguel mensal - Cliente A', valor:1400, frequencia:'mensal', diaMes:5, dataInicio:'2026-01-05', receivedDates:['2026-07-05'], ativo:true },
+    { id:'r1', tipo:'frota', direcao:'entrada', descricao:'Aluguel mensal - Cliente A', valor:1400, frequencia:'mensal', diaMes:5, dataInicio:'2026-07-01', receivedDates:['2026-07-05'], ativo:true },
     { id:'r2', tipo:'pix', direcao:'entrada', descricao:'Venda parcelada - Cliente B', valor:300, frequencia:'parcelas', parcelasTotal:5, dataInicio:'2026-05-10', receivedDates:['2026-05-10','2026-06-10'], ativo:true },
-    { id:'r3', tipo:'salario', direcao:'entrada', descricao:'Salário', valor:2500, frequencia:'mensal', diaMes:31, dataInicio:'2026-01-31', receivedDates:[], ativo:true },
-    { id:'r4', direcao:'saida', categoria:'Aluguel do galpão', descricao:'Aluguel do galpão', valor:800, frequencia:'mensal', diaMes:31, dataInicio:'2026-01-31', receivedDates:[], ativo:true },
+    { id:'r3', tipo:'salario', direcao:'entrada', descricao:'Salário', valor:2500, frequencia:'semanal', diaSemana:5, dataInicio:'2026-07-31', receivedDates:[], ativo:true },
+    { id:'r4', direcao:'saida', categoria:'Aluguel do galpão', descricao:'Aluguel do galpão', valor:800, frequencia:'mensal', diaMes:28, dataInicio:'2026-07-01', receivedDates:[], ativo:true },
   ],
   vehicles: [
     { id:'v1', modelo:'Veículo 1', placa:'ABC1D23', status:'alugado' },
