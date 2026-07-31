@@ -39,7 +39,8 @@
   .brand-w{color:var(--text);}
   .brand-g{color:var(--gold);}
   .avatar-badge{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-    font-size:17px;gap:1px;background:var(--surface2);border:1.5px solid var(--gold);box-shadow:var(--glow);}
+    font-size:17px;gap:1px;background:var(--surface2);border:1.5px solid var(--gold);box-shadow:var(--glow);overflow:hidden;}
+  .avatar-img{width:100%;height:100%;object-fit:cover;display:block;}
   main{flex:1;padding:16px 20px 110px;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   .month-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:18px;}
   .month-label{font-family:var(--font-mono);font-size:13px;letter-spacing:.04em;color:#B8BEC7;
@@ -47,7 +48,9 @@
   .icon-btn{background:var(--surface2);border:1px solid var(--border);border-radius:8px;width:32px;height:32px;
     display:flex;align-items:center;justify-content:center;color:#B8BEC7;cursor:pointer;font-size:16px;}
   .balance-card{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:24px 20px;margin-bottom:26px;
-    box-shadow:0 0 32px rgba(245,184,0,.06);}
+    box-shadow:0 0 32px rgba(245,184,0,.06);position:relative;overflow:hidden;}
+  .balance-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+    background:linear-gradient(90deg,var(--gold),rgba(245,184,0,0));}
   .balance-eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;}
   .balance-number{font-family:var(--font-mono);font-size:34px;font-weight:600;margin-top:6px;letter-spacing:-.01em;}
   .balance-divider{height:1px;background:var(--border);margin:18px 0 16px;}
@@ -96,12 +99,16 @@
     align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 26px rgba(245,184,0,.5);
     font-size:26px;color:#080604;line-height:1;}
   @media (max-width:520px){ .fab{right:20px;} }
-  .tabbar{display:flex;border-top:1px solid var(--border);background:var(--bg);position:sticky;bottom:0;
-    padding-bottom:env(safe-area-inset-bottom);}
+  .tabbar{display:flex;border-top:1px solid var(--border);background:rgba(8,6,4,.86);position:sticky;bottom:0;
+    padding-bottom:env(safe-area-inset-bottom);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 -10px 28px rgba(0,0,0,.35);}
   .tab-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0 12px;
     background:none;border:none;cursor:pointer;color:var(--dim);font-family:var(--font-body);}
   .tab-btn.active{color:var(--gold);text-shadow:0 0 10px rgba(245,184,0,.5);}
-  .tab-btn .ic{font-size:19px;}
+  .tab-btn .ic{width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:12px;
+    transition:background .15s ease,color .15s ease;}
+  .tab-btn .ic svg{width:19px;height:19px;display:block;}
+  .tab-btn.active .ic{background:rgba(245,184,0,.14);}
   .tab-label{font-size:10px;letter-spacing:.03em;}
   .sheet-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;
     justify-content:center;z-index:30;}
@@ -165,8 +172,19 @@
   .rec-desc{font-size:15px;font-weight:600;}
   .rec-meta{font-size:11px;color:var(--dim);}
   .rec-actions{display:flex;justify-content:space-between;align-items:center;margin-top:2px;}
-  .chart-wrap{position:relative;height:220px;margin-bottom:28px;}
+  .chart-wrap{position:relative;height:220px;margin-bottom:28px;background:var(--surface);
+    border:1px solid var(--border);border-radius:16px;padding:16px 12px 10px;box-shadow:0 4px 20px rgba(0,0,0,.18);}
   .chart-wrap.tall{height:240px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:22px;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;
+    position:relative;overflow:hidden;}
+  .stat-label{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+  .stat-value{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--text);}
+  .stat-value.pos{color:var(--green);}
+  .stat-value.neg{color:var(--red);}
+  .stat-value.gold{color:var(--gold);}
+  .tab-content{animation:fadeSlideIn .28s ease;}
+  @keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
   .vehicle-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;
     margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
   .vehicle-model{font-weight:600;font-size:15px;}
@@ -186,7 +204,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       <button class="icon-btn" id="logoutBtn" title="Sair" style="display:none;">⏻</button>
-      <div class="avatar-badge">🥷🏿💰</div>
+      <div class="avatar-badge"><img src="ninja-avatar.png" alt="Gestão do Padrinho" class="avatar-img"></div>
     </div>
   </header>
   <div id="errorBanner" class="error-banner" style="display:none;"></div>
@@ -195,12 +213,12 @@
   <main id="main" style="display:none;"></main>
   <button class="fab" id="fabBtn" style="display:none;">+</button>
   <nav class="tabbar" id="tabbar" style="display:none;">
-    <button class="tab-btn" data-tab="resumo"><span class="ic">◐</span><span class="tab-label">Resumo</span></button>
-    <button class="tab-btn" data-tab="lancamentos"><span class="ic">≡</span><span class="tab-label">Lançamentos</span></button>
-    <button class="tab-btn" data-tab="previsao"><span class="ic">◈</span><span class="tab-label">Previsão</span></button>
-    <button class="tab-btn" data-tab="frota"><span class="ic">🚗</span><span class="tab-label">Frota</span></button>
-    <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic">%</span><span class="tab-label">Empréstimos</span></button>
-    <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic">☺</span><span class="tab-label">Usuários</span></button>
+    <button class="tab-btn" data-tab="resumo"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M21 3a9 9 0 0 0-9 9h9z" fill="currentColor" stroke="none" opacity=".25"/></svg></span><span class="tab-label">Resumo</span></button>
+    <button class="tab-btn" data-tab="lancamentos"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><span class="tab-label">Lançamentos</span></button>
+    <button class="tab-btn" data-tab="previsao"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span><span class="tab-label">Previsão</span></button>
+    <button class="tab-btn" data-tab="frota"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l1.6-4.3A2 2 0 0 1 8.5 5.4h7a2 2 0 0 1 1.9 1.3L19 11"/><rect x="2.5" y="11" width="19" height="6" rx="2"/><circle cx="7" cy="17.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="17" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg></span><span class="tab-label">Frota</span></button>
+    <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span><span class="tab-label">Empréstimos</span></button>
+    <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="tab-label">Usuários</span></button>
   </nav>
 </div>
 
@@ -397,7 +415,7 @@ function previsaoRange(refDate){
   const monthStart = midnight(new Date(refDate.getFullYear(), refDate.getMonth(), 1));
   const monthEnd = midnight(new Date(refDate.getFullYear(), refDate.getMonth()+1, 0));
   const rangeStart = isCurrentMonth ? addDays(hoje, -LOOKBACK_DAYS) : monthStart;
-  return { rangeStart, rangeEnd: monthEnd, isCurrentMonth, hoje };
+  return { rangeStart, rangeEnd: monthEnd, monthStart, isCurrentMonth, hoje };
 }
 
 // ---------- charts ----------
@@ -440,9 +458,69 @@ function makeBar(canvasId, labels, datasets, stacked){
     }
   });
 }
+function makeLine(canvasId, labels, datasets){
+  destroyChart(canvasId);
+  const el = document.getElementById(canvasId);
+  if(!el) return;
+  chartInstances[canvasId] = new Chart(el, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#889099', font: { size: 11 } }, grid: { display: false } },
+        y: { ticks: { color: '#889099', font: { size: 11 } }, grid: { color: '#211C14' } }
+      },
+      plugins: { legend: { display: datasets.length>1, position: 'bottom', labels: { color: '#B8BEC7', font: { size: 11 } } } }
+    }
+  });
+}
 function renderCharts(){
   if(state.tab === 'resumo') renderResumoCharts();
   else if(state.tab === 'previsao') renderPrevisaoCharts();
+  else if(state.tab === 'lancamentos') renderLancamentosCharts();
+  else if(state.tab === 'frota') renderFrotaCharts();
+  else if(state.tab === 'emprestimos') renderEmprestimosCharts();
+}
+function renderLancamentosCharts(){
+  const refMonth = state.refMonth;
+  const monthTx = state.data.transactions.filter(t => isSameMonth(t.date, refMonth)).sort((a,b)=> a.date < b.date ? -1 : 1);
+  if(monthTx.length===0){ destroyChart('chartLancEvolucao'); return; }
+  const byDate = {};
+  monthTx.forEach(t=>{
+    const delta = t.type==='income' ? t.amount : -t.amount;
+    byDate[t.date] = (byDate[t.date]||0) + delta;
+  });
+  const dates = Object.keys(byDate).sort();
+  let running = 0;
+  const labels = [], data = [];
+  dates.forEach(d=>{
+    running += byDate[d];
+    labels.push(new Date(d+'T00:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}));
+    data.push(running);
+  });
+  makeLine('chartLancEvolucao', labels, [{
+    label: 'Saldo acumulado', data, borderColor: '#F5B800', backgroundColor: 'rgba(245,184,0,.14)',
+    fill: true, tension: .35, pointRadius: 0, borderWidth: 2,
+  }]);
+}
+function renderFrotaCharts(){
+  const vs = state.data.vehicles;
+  if(vs.length===0){ destroyChart('chartFrotaStatus'); return; }
+  const statusLabels = { alugado:'Alugado', disponivel:'Disponível', manutencao:'Manutenção' };
+  const colors = { alugado:'#3ED598', disponivel:'#8FB4D9', manutencao:'#F0555A' };
+  const counts = { alugado:0, disponivel:0, manutencao:0 };
+  vs.forEach(v=>{ const s = v.status||'disponivel'; counts[s] = (counts[s]||0)+1; });
+  const entries = Object.entries(counts).filter(([,v])=>v>0);
+  makeDoughnut('chartFrotaStatus', entries.map(([k])=>statusLabels[k]), entries.map(([,v])=>v), entries.map(([k])=>colors[k]));
+}
+function renderEmprestimosCharts(){
+  const loans = state.data.loans.map(normalizeLoan).filter(l=>l.status!=='paid');
+  if(loans.length===0){ destroyChart('chartEmprestimosCapital'); return; }
+  const byBorrower = {};
+  loans.forEach(l=>{ byBorrower[l.borrower] = (byBorrower[l.borrower]||0) + l.principal; });
+  const entries = Object.entries(byBorrower).sort((a,b)=>b[1]-a[1]);
+  makeDoughnut('chartEmprestimosCapital', entries.map(e=>e[0]), entries.map(e=>e[1]), CHART_COLORS);
 }
 function renderResumoCharts(){
   const refMonth = state.refMonth;
@@ -465,7 +543,7 @@ function renderResumoCharts(){
 }
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const { rangeStart, rangeEnd } = previsaoRange(state.previsaoRefMonth);
+  const { rangeStart, rangeEnd, monthStart, hoje } = previsaoRange(state.previsaoRefMonth);
   const forecast = buildForecast(recs, rangeStart, rangeEnd);
   const pendentes = forecast.filter(i=>!i.received && i.direcao!=='saida');
   const byTipo = {};
@@ -477,21 +555,29 @@ function renderPrevisaoCharts(){
     tipoEntries.map(([t])=>TIPOS_RECEITA[t].color));
 
   // agrupado por semana, dentro da janela do mês selecionado (só entradas ainda não recebidas)
+  // separado em "atrasado" (já venceu) vs "a receber" (ainda dentro do prazo), pra não misturar os dois num só total
   const semanaLabels = [];
-  const semanaTotais = [];
-  let cursor = new Date(rangeStart);
+  const semanaAtrasado = [];
+  const semanaAReceber = [];
+  let cursor = new Date(monthStart);
   while(cursor <= rangeEnd){
     const inicioSemana = new Date(cursor);
     const fimSemana = addDays(cursor, 6);
-    const total = pendentes.filter(f=>{
+    const daSemana = pendentes.filter(f=>{
       const d = midnight(new Date(f.date+'T00:00:00'));
       return d >= inicioSemana && d <= fimSemana;
-    }).reduce((s,f)=>s+f.valor,0);
+    });
+    const atrasado = daSemana.filter(f=> midnight(new Date(f.date+'T00:00:00')) < hoje).reduce((s,f)=>s+f.valor,0);
+    const aReceber = daSemana.filter(f=> midnight(new Date(f.date+'T00:00:00')) >= hoje).reduce((s,f)=>s+f.valor,0);
     semanaLabels.push(`${inicioSemana.getDate()}/${inicioSemana.getMonth()+1}`);
-    semanaTotais.push(total);
+    semanaAtrasado.push(atrasado);
+    semanaAReceber.push(aReceber);
     cursor = addDays(cursor, 7);
   }
-  makeBar('chartPrevisaoSemanal', semanaLabels, [{ label: 'Previsto', data: semanaTotais, backgroundColor: '#F5B800' }]);
+  makeBar('chartPrevisaoSemanal', semanaLabels, [
+    { label: 'Atrasado', data: semanaAtrasado, backgroundColor: '#F0555A' },
+    { label: 'A receber', data: semanaAReceber, backgroundColor: '#F5B800' },
+  ], true);
 }
 
 // ---------- state ----------
@@ -729,12 +815,12 @@ function render(){
   const banner = (state.currentUser && state.currentUser.role === 'admin' && state.viewingUid !== state.currentUser.uid)
     ? `<div class="viewing-banner"><span>Visualizando dados de <b>${escapeHtml(state.viewingUsername)}</b></span><button class="small-btn" id="backToMine">meus dados</button></div>`
     : '';
-  if(state.tab === 'resumo') mainEl.innerHTML = banner + renderResumo();
-  else if(state.tab === 'lancamentos') mainEl.innerHTML = banner + renderLancamentos();
-  else if(state.tab === 'previsao') mainEl.innerHTML = banner + renderPrevisao();
-  else if(state.tab === 'frota') mainEl.innerHTML = banner + renderFrota();
-  else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + renderEmprestimos();
-  else mainEl.innerHTML = renderUsuarios();
+  if(state.tab === 'resumo') mainEl.innerHTML = banner + `<div class="tab-content">${renderResumo()}</div>`;
+  else if(state.tab === 'lancamentos') mainEl.innerHTML = banner + `<div class="tab-content">${renderLancamentos()}</div>`;
+  else if(state.tab === 'previsao') mainEl.innerHTML = banner + `<div class="tab-content">${renderPrevisao()}</div>`;
+  else if(state.tab === 'frota') mainEl.innerHTML = banner + `<div class="tab-content">${renderFrota()}</div>`;
+  else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + `<div class="tab-content">${renderEmprestimos()}</div>`;
+  else mainEl.innerHTML = `<div class="tab-content">${renderUsuarios()}</div>`;
   attachMainListeners();
   renderCharts();
 }
@@ -760,6 +846,9 @@ function renderResumo(){
   monthTx.filter(t=>t.type==='expense').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+t.amount; });
   const maxCat = Math.max(1, ...Object.values(byCat));
   const catEntries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const expenseCount = monthTx.filter(t=>t.type==='expense').length;
+  const ticketMedio = expenseCount>0 ? totalExpense/expenseCount : 0;
+  const maiorCat = catEntries[0];
 
   return `
     <div class="month-nav">
@@ -782,6 +871,12 @@ function renderResumo(){
           <span class="balance-col-value" style="color:#D98A8E">${fmt(totalExpense)}</span>
         </div>
       </div>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Lançamentos no mês</div><div class="stat-value">${monthTx.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Ticket médio de gasto</div><div class="stat-value">${fmt(ticketMedio)}</div></div>
+      <div class="stat-card"><div class="stat-label">Maior categoria</div><div class="stat-value gold" style="font-size:14px;">${maiorCat ? escapeHtml(maiorCat[0]) : '—'}</div></div>
+      <div class="stat-card"><div class="stat-label">Empréstimos ativos</div><div class="stat-value">${activeLoans.length}</div></div>
     </div>
     <div class="section-title">gastos por categoria</div>
     ${catEntries.length===0 ? '<div class="empty-note">Nenhum gasto lançado este mês.</div>' : `
@@ -815,12 +910,23 @@ function renderLancamentos(){
   const list = state.data.transactions
     .filter(t=>isSameMonth(t.date, refMonth))
     .sort((a,b)=> a.date < b.date ? 1 : -1);
+  const totalIncome = list.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const totalExpense = list.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
   return `
     <div class="month-nav">
       <button class="icon-btn" id="prevMonth">‹</button>
       <div class="month-label">${monthLabel(refMonth)}</div>
       <button class="icon-btn" id="nextMonth">›</button>
     </div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Entradas</div><div class="stat-value pos">${fmt(totalIncome)}</div></div>
+      <div class="stat-card"><div class="stat-label">Saídas</div><div class="stat-value neg">${fmt(totalExpense)}</div></div>
+      <div class="stat-card"><div class="stat-label">Saldo do período</div><div class="stat-value" style="color:${(totalIncome-totalExpense)>=0?'var(--green)':'var(--red)'}">${fmt(totalIncome-totalExpense)}</div></div>
+      <div class="stat-card"><div class="stat-label">Nº de lançamentos</div><div class="stat-value">${list.length}</div></div>
+    </div>
+    ${list.length===0 ? '' : `
+    <div class="section-title">evolução do saldo no mês</div>
+    <div class="chart-wrap"><canvas id="chartLancEvolucao"></canvas></div>`}
     ${list.length===0 ? '<div class="empty-note">Nenhum lançamento neste mês. Toque em + para adicionar.</div>' : `
     <div class="tx-list">
       ${list.map(t=>`
@@ -948,9 +1054,22 @@ function renderPrevisao(){
   `;
 }
 function renderFrota(){
+  const vs = state.data.vehicles;
+  const alugados = vs.filter(v=>(v.status||'disponivel')==='alugado').length;
+  const disponiveis = vs.filter(v=>(v.status||'disponivel')==='disponivel').length;
+  const manutencao = vs.filter(v=>(v.status||'disponivel')==='manutencao').length;
   return `
+    ${vs.length===0 ? '' : `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Total de veículos</div><div class="stat-value">${vs.length}</div></div>
+      <div class="stat-card"><div class="stat-label">Alugados</div><div class="stat-value pos">${alugados}</div></div>
+      <div class="stat-card"><div class="stat-label">Disponíveis</div><div class="stat-value" style="color:#8FB4D9">${disponiveis}</div></div>
+      <div class="stat-card"><div class="stat-label">Em manutenção</div><div class="stat-value neg">${manutencao}</div></div>
+    </div>
+    <div class="section-title">status da frota</div>
+    <div class="chart-wrap"><canvas id="chartFrotaStatus"></canvas></div>`}
     <div class="section-title">sua frota</div>
-    ${state.data.vehicles.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : state.data.vehicles.map(vehicleCardHtml).join('')}
+    ${vs.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : vs.map(vehicleCardHtml).join('')}
   `;
 }
 function vehicleCardHtml(v){
@@ -1041,7 +1160,20 @@ function renderEmprestimos(){
   const loans = state.data.loans.map(normalizeLoan);
   const active = loans.filter(l=>l.status!=='paid');
   const paid = loans.filter(l=>l.status==='paid');
+  const capitalAtivo = active.reduce((s,l)=>s+l.principal,0);
+  let jurosAReceber = 0;
+  active.forEach(l=>{ const { juros, lateFeeTotal } = computeLoanAmounts(l, new Date()); jurosAReceber += juros + lateFeeTotal; });
+  const mutuarios = new Set(active.map(l=>l.borrower)).size;
   return `
+    ${active.length===0 ? '' : `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">Capital ativo</div><div class="stat-value">${fmt(capitalAtivo)}</div></div>
+      <div class="stat-card"><div class="stat-label">Juros a receber</div><div class="stat-value gold">${fmt(jurosAReceber)}</div></div>
+      <div class="stat-card"><div class="stat-label">Mutuários ativos</div><div class="stat-value">${mutuarios}</div></div>
+      <div class="stat-card"><div class="stat-label">Empréstimos quitados</div><div class="stat-value pos">${paid.length}</div></div>
+    </div>
+    <div class="section-title">capital por mutuário</div>
+    <div class="chart-wrap"><canvas id="chartEmprestimosCapital"></canvas></div>`}
     <div class="section-title">ativos</div>
     ${active.length===0 ? '<div class="empty-note">Nenhum empréstimo ativo. Toque em + para registrar.</div>' : active.map(loanCardHtml).join('')}
     ${paid.length>0 ? `<div class="section-title">quitados</div>${paid.map(loanCardHtml).join('')}` : ''}
