@@ -290,7 +290,7 @@ function showToast(msg){
 }
 function usernameToEmail(u){ return `${u.trim().toLowerCase()}@${EMAIL_DOMAIN}`; }
 
-const CATS_EXPENSE = ['Moradia','Alimentação','Transporte','Saúde','Lazer','Contas','Empréstimo','Outros'];
+const CATS_EXPENSE = ['Moradia','Alimentação','Transporte','Saúde','Lazer','Contas','Empréstimo','Manutenção de veículo','Outros'];
 const CATS_INCOME = ['Salário','Freelance','Rendimentos','Empréstimo recebido','Outros'];
 
 // ---------- tipos de receita previsível ----------
@@ -397,14 +397,49 @@ function darBaixaFrota(recId, date, valorBase){
   const veiculoLabel = veiculo ? ` (${veiculo.placa || veiculo.modelo})` : '';
   const descBase = (rec.descricao || TIPOS_RECEITA.frota.label) + veiculoLabel;
   const desc = daysLate>0 ? `${descBase} — ${daysLate}d atraso, multa+juros ${fmt(multa+juros)}` : descBase;
-  addTransaction({
+  const tx = {
     type: 'income',
     description: desc,
     amount: total,
     category: 'Rendimentos',
     date: todayISO(),
-  });
+  };
+  if(rec.veiculoId) tx.veiculoId = rec.veiculoId;
+  addTransaction(tx);
   showToast(daysLate>0 ? `✓ ${fmt(total)} recebido (com juros/multa de ${daysLate}d de atraso)` : `✓ ${fmt(total)} recebido`);
+}
+
+// ---------- manutenção e lucratividade por veículo ----------
+const CAT_MANUTENCAO = 'Manutenção de veículo';
+function addVehicleExpense(veiculoId, descricao, valor, date){
+  addTransaction({
+    type: 'expense',
+    description: descricao || CAT_MANUTENCAO,
+    amount: valor,
+    category: CAT_MANUTENCAO,
+    date: date || todayISO(),
+    veiculoId,
+  });
+  showToast(`✓ ${fmt(valor)} lançado em manutenção`);
+}
+// receita (aluguel + juros/multa recebidos), manutenção e lucro líquido de cada veículo no mês de referência
+function vehicleProfitByMonth(refMonth){
+  const byVehicle = {};
+  state.data.vehicles.forEach(v=>{ byVehicle[v.id] = { receita: 0, manutencao: 0, manutencoes: [] }; });
+  state.data.transactions.forEach(t=>{
+    if(!t.veiculoId || !byVehicle[t.veiculoId]) return;
+    if(!isSameMonth(t.date, refMonth)) return;
+    if(t.type === 'income') byVehicle[t.veiculoId].receita += t.amount;
+    else if(t.type === 'expense' && t.category === CAT_MANUTENCAO){
+      byVehicle[t.veiculoId].manutencao += t.amount;
+      byVehicle[t.veiculoId].manutencoes.push(t);
+    }
+  });
+  Object.values(byVehicle).forEach(b=>{
+    b.lucro = b.receita - b.manutencao;
+    b.manutencoes.sort((a,b2)=> a.date < b2.date ? 1 : -1);
+  });
+  return byVehicle;
 }
 
 // ---------- recorrência / previsão helpers ----------
@@ -569,13 +604,20 @@ function renderLancamentosCharts(){
 }
 function renderFrotaCharts(){
   const vs = state.data.vehicles;
-  if(vs.length===0){ destroyChart('chartFrotaStatus'); return; }
+  if(vs.length===0){ destroyChart('chartFrotaStatus'); destroyChart('chartFrotaLucro'); return; }
   const statusLabels = { alugado:'Alugado', disponivel:'Disponível', manutencao:'Manutenção' };
   const colors = { alugado:'#3ED598', disponivel:'#8FB4D9', manutencao:'#F0555A' };
   const counts = { alugado:0, disponivel:0, manutencao:0 };
   vs.forEach(v=>{ const s = v.status||'disponivel'; counts[s] = (counts[s]||0)+1; });
   const entries = Object.entries(counts).filter(([,v])=>v>0);
   makeDoughnut('chartFrotaStatus', entries.map(([k])=>statusLabels[k]), entries.map(([,v])=>v), entries.map(([k])=>colors[k]));
+
+  const profit = vehicleProfitByMonth(new Date());
+  const labels = vs.map(v=> v.placa || v.modelo);
+  const lucroData = vs.map(v=> (profit[v.id]||{lucro:0}).lucro);
+  makeBar('chartFrotaLucro', labels, [
+    { label: 'Lucro líquido do mês', data: lucroData, backgroundColor: lucroData.map(l=> l>=0 ? '#3ED598' : '#F0555A') },
+  ]);
 }
 function renderEmprestimosCharts(){
   const loans = state.data.loans.map(normalizeLoan).filter(l=>l.status!=='paid');
@@ -1131,6 +1173,7 @@ function renderFrota(){
   const manutencao = vs.filter(v=>(v.status||'disponivel')==='manutencao').length;
   const pend = frotaPendingByVehicle();
   const totalJurosMulta = Object.values(pend).reduce((s,p)=>s+p.totalMulta+p.totalJuros,0);
+  const profit = vehicleProfitByMonth(new Date());
   return `
     ${vs.length===0 ? '' : `
     <div class="stat-grid">
@@ -1140,16 +1183,19 @@ function renderFrota(){
       <div class="stat-card"><div class="stat-label">Em manutenção</div><div class="stat-value neg">${manutencao}</div></div>
     </div>
     <div class="section-title">status da frota</div>
-    <div class="chart-wrap"><canvas id="chartFrotaStatus"></canvas></div>`}
+    <div class="chart-wrap"><canvas id="chartFrotaStatus"></canvas></div>
+    <div class="section-title">lucratividade por veículo — ${monthLabel(new Date())}</div>
+    <div class="chart-wrap"><canvas id="chartFrotaLucro"></canvas></div>`}
     ${totalJurosMulta>0 ? `<div class="empty-note" style="color:var(--red);">⚠ ${fmt(totalJurosMulta)} em multa/juros por atraso acumulados na frota</div>` : ''}
     <div class="section-title">sua frota</div>
-    ${vs.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : vs.map(v=>vehicleCardHtml(v, pend[v.id])).join('')}
+    ${vs.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : vs.map(v=>vehicleCardHtml(v, pend[v.id], profit[v.id])).join('')}
   `;
 }
-function vehicleCardHtml(v, pend){
+function vehicleCardHtml(v, pend, profit){
   const statusLabel = { alugado: 'Alugado', disponivel: 'Disponível', manutencao: 'Manutenção' }[v.status] || 'Disponível';
   const overdue = pend && pend.maxDaysLate > 0;
   const totalDevido = pend ? (pend.totalBase + pend.totalMulta + pend.totalJuros) : 0;
+  const p = profit || { receita: 0, manutencao: 0, lucro: 0, manutencoes: [] };
   return `
     <div class="vehicle-card">
       <div class="vehicle-card-top">
@@ -1176,6 +1222,30 @@ function vehicleCardHtml(v, pend){
         </div>
         <button class="small-btn" style="align-self:flex-start;margin-top:4px;" data-dar-baixa-frota="${pend.recId}" data-frota-date="${pend.oldestDate}" data-frota-valor="${pend.valor}">Dar baixa (semana mais antiga)</button>
       </div>` : ''}
+      <div class="vehicle-late">
+        <div class="rec-meta" style="text-transform:uppercase;letter-spacing:.06em;">manutenção · ${monthLabel(new Date())}</div>
+        <div class="loan-summary-row"><span class="balance-col-label">Receita do mês</span><span style="font-family:var(--font-mono);font-size:15px;color:var(--green);">${fmt(p.receita)}</span></div>
+        <div class="loan-summary-row"><span class="balance-col-label">Manutenção do mês</span><span style="font-family:var(--font-mono);font-size:15px;color:var(--red);">${fmt(p.manutencao)}</span></div>
+        <div class="loan-summary-row" style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px;">
+          <span class="balance-col-label" style="color:var(--text)">Lucro líquido</span>
+          <span style="font-family:var(--font-mono);font-size:16px;font-weight:600;color:${p.lucro>=0?'var(--green)':'var(--red)'};">${fmt(p.lucro)}</span>
+        </div>
+        ${p.manutencoes.length>0 ? `
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">
+          ${p.manutencoes.map(m=>`
+            <div class="tx-row" style="padding:6px 0;">
+              <div class="tx-dot" style="background:var(--red)"></div>
+              <div class="tx-info">
+                <div class="tx-desc">${escapeHtml(m.description) || 'Manutenção'}</div>
+                <div class="tx-meta">${new Date(m.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+              </div>
+              <div class="tx-amount" style="color:var(--red)">- ${fmt(m.amount)}</div>
+              <button class="trash-btn" data-delete-tx="${m.id}">✕</button>
+            </div>
+          `).join('')}
+        </div>` : ''}
+        <button class="small-btn" style="align-self:flex-start;margin-top:4px;" data-add-maintenance="${v.id}">+ Manutenção (bateria, pneu...)</button>
+      </div>
     </div>
   `;
 }
@@ -1363,6 +1433,9 @@ function attachMainListeners(){
       btn.getAttribute('data-frota-date'),
       parseFloat(btn.getAttribute('data-frota-valor'))
     );
+  });
+  document.querySelectorAll('[data-add-maintenance]').forEach(btn=>{
+    btn.onclick = () => openMaintenanceForm(btn.getAttribute('data-add-maintenance'));
   });
   const addVehicleBtn = document.getElementById('openAddVehicle');
   if(addVehicleBtn) addVehicleBtn.onclick = openVehicleForm;
@@ -1707,6 +1780,48 @@ function openVehicleForm(){
       placa: overlay.querySelector('#vehiclePlaca').value.trim(),
       status: overlay.querySelector('#vehicleStatus').value,
     });
+    overlay.remove();
+  };
+}
+
+// ---------- Manutenção do veículo ----------
+function openMaintenanceForm(veiculoId){
+  const v = state.data.vehicles.find(v=>v.id===veiculoId);
+  if(!v) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet" role="dialog">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">Manutenção · ${escapeHtml(v.modelo)}</div>
+        <button class="icon-btn" id="closeMaintenanceForm">✕</button>
+      </div>
+      <label class="field-label">Descrição</label>
+      <input id="maintDesc" placeholder="Ex: Troca de bateria, pneus, óleo...">
+      <label class="field-label">Valor gasto</label>
+      <input id="maintValor" inputmode="decimal" placeholder="0,00">
+      <label class="field-label">Data</label>
+      <input id="maintData" type="date" value="${todayISO()}">
+      <button class="save-btn" id="maintSave" disabled>Lançar manutenção</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const descInput = overlay.querySelector('#maintDesc');
+  const valorInput = overlay.querySelector('#maintValor');
+  const dataInput = overlay.querySelector('#maintData');
+  const saveBtn = overlay.querySelector('#maintSave');
+  function validate(){ saveBtn.disabled = !(descInput.value.trim() && parseBR(valorInput.value) > 0); }
+  descInput.oninput = validate;
+  valorInput.oninput = validate;
+
+  overlay.querySelector('#closeMaintenanceForm').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  saveBtn.onclick = () => {
+    const valor = parseBR(valorInput.value);
+    if(!(valor>0)) return;
+    addVehicleExpense(veiculoId, descInput.value.trim(), valor, dataInput.value || todayISO());
     overlay.remove();
   };
 }
