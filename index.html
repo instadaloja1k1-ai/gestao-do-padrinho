@@ -506,6 +506,54 @@ function buildForecast(recurrences, rangeStart, rangeEnd){
   items.sort((a,b)=> a.date < b.date ? -1 : 1);
   return items;
 }
+// saldo projetado dia a dia pros próximos 30 dias: recorrências pendentes (entradas/saídas)
+// + vencimentos de empréstimos ativos (parcela ou valor total no vencimento)
+function buildCashFlow30(){
+  const hoje = midnight(new Date());
+  const rangeEnd = addDays(hoje, 30);
+  const byDate = {};
+  for(let d=0; d<=30; d++) byDate[toISO(addDays(hoje, d))] = { entradas: 0, saidas: 0 };
+
+  state.data.recurrences.map(normalizeRecurrence).forEach(rec=>{
+    nextOccurrences(rec, hoje, rangeEnd).forEach(occ=>{
+      if((rec.receivedDates||[]).includes(occ.date)) return;
+      const bucket = byDate[occ.date];
+      if(!bucket) return;
+      if(rec.direcao === 'saida') bucket.saidas += rec.valor;
+      else bucket.entradas += rec.valor;
+    });
+  });
+
+  state.data.loans.map(normalizeLoan).filter(l=>l.status!=='paid').forEach(l=>{
+    if(l.calcMode === 'parcelado'){
+      if(!l.primeiraParcelaData) return;
+      const { valorParcela } = computeLoanAmounts(l, new Date());
+      const pagas = l.parcelasPagasCount||0;
+      for(let i=pagas; i<(l.numParcelas||0); i++){
+        const iso = toISO(midnight(addMonths(new Date(l.primeiraParcelaData+'T00:00:00'), i)));
+        if(byDate[iso]) byDate[iso].entradas += valorParcela;
+      }
+    }else if(l.dueDate){
+      const due = midnight(new Date(l.dueDate+'T00:00:00'));
+      const iso = toISO(due);
+      if(byDate[iso]){
+        const { total } = computeLoanAmounts(l, due);
+        byDate[iso].entradas += total;
+      }
+    }
+  });
+
+  let saldo = 0;
+  const dias = [];
+  for(let d=0; d<=30; d++){
+    const date = addDays(hoje, d);
+    const iso = toISO(date);
+    const { entradas, saidas } = byDate[iso];
+    saldo += entradas - saidas;
+    dias.push({ date: iso, entradas, saidas, saldoAcumulado: saldo });
+  }
+  return dias;
+}
 // calcula a janela de datas a olhar para um mês de referência da Previsão
 function previsaoRange(refDate){
   const hoje = midnight(new Date());
@@ -683,6 +731,16 @@ function renderPrevisaoCharts(){
     { label: 'Atrasado', data: semanaAtrasado, backgroundColor: '#F0555A' },
     { label: 'A receber', data: semanaAReceber, backgroundColor: '#F5B800' },
   ], true);
+
+  const fluxo = buildCashFlow30();
+  makeLine('chartFluxoCaixa',
+    fluxo.map(d=> new Date(d.date+'T00:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})),
+    [{
+      label: 'Saldo acumulado projetado', data: fluxo.map(d=>d.saldoAcumulado),
+      borderColor: '#F5B800', backgroundColor: 'rgba(245,184,0,.14)',
+      fill: true, tension: .3, pointRadius: 0, borderWidth: 2,
+    }]
+  );
 }
 
 // ---------- state ----------
@@ -930,6 +988,63 @@ function render(){
   renderCharts();
 }
 
+// ---------- exportar relatório do mês (CSV, abre direto no Excel) ----------
+function csvField(v){
+  const s = String(v ?? '');
+  return /[";\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+}
+function csvNumber(n){
+  return (n||0).toFixed(2).replace('.', ',');
+}
+function exportMonthCSV(refMonth){
+  const monthTx = state.data.transactions
+    .filter(t=>isSameMonth(t.date, refMonth))
+    .sort((a,b)=> a.date < b.date ? -1 : 1);
+
+  const rows = [['Data','Tipo','Categoria','Veículo','Descrição','Valor (R$)']];
+  monthTx.forEach(t=>{
+    const veiculo = t.veiculoId ? state.data.vehicles.find(v=>v.id===t.veiculoId) : null;
+    rows.push([
+      new Date(t.date+'T00:00:00').toLocaleDateString('pt-BR'),
+      t.type==='income' ? 'Entrada' : 'Saída',
+      t.category || '',
+      veiculo ? (veiculo.placa || veiculo.modelo) : '',
+      t.description || '',
+      csvNumber(t.amount),
+    ]);
+  });
+
+  const totalIncome = monthTx.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+  const totalExpense = monthTx.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+  rows.push([]);
+  rows.push(['Total de entradas','','','','', csvNumber(totalIncome)]);
+  rows.push(['Total de saídas','','','','', csvNumber(totalExpense)]);
+  rows.push(['Saldo do mês','','','','', csvNumber(totalIncome-totalExpense)]);
+
+  if(state.data.vehicles.length>0){
+    const profit = vehicleProfitByMonth(refMonth);
+    rows.push([]);
+    rows.push(['Lucratividade por veículo']);
+    rows.push(['Veículo','Receita','Manutenção','Lucro líquido']);
+    state.data.vehicles.forEach(v=>{
+      const p = profit[v.id] || { receita:0, manutencao:0, lucro:0 };
+      rows.push([v.placa || v.modelo, csvNumber(p.receita), csvNumber(p.manutencao), csvNumber(p.lucro)]);
+    });
+  }
+
+  const csv = '﻿' + rows.map(r => r.map(csvField).join(';')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gestao-padrinho_${toISO(refMonth).slice(0,7)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('✓ Relatório exportado');
+}
+
 // ---------- Resumo ----------
 function renderResumo(){
   const refMonth = state.refMonth;
@@ -977,6 +1092,7 @@ function renderResumo(){
         </div>
       </div>
     </div>
+    <button class="small-btn" id="exportMonthBtn" style="width:100%;margin-bottom:22px;padding:10px 0;">⬇ Exportar relatório do mês (CSV)</button>
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-label">Lançamentos no mês</div><div class="stat-value">${monthTx.length}</div></div>
       <div class="stat-card"><div class="stat-label">Ticket médio de gasto</div><div class="stat-value">${fmt(ticketMedio)}</div></div>
@@ -1107,6 +1223,16 @@ function renderPrevisao(){
       </div>
       ${(totalEntradaAtrasada>0 || totalSaidaAtrasada>0) ? `<div class="empty-note" style="color:var(--red);padding-top:14px;">⚠ ${totalEntradaAtrasada>0?`${fmt(totalEntradaAtrasada)} a receber atrasado`:''}${(totalEntradaAtrasada>0&&totalSaidaAtrasada>0)?' · ':''}${totalSaidaAtrasada>0?`${fmt(totalSaidaAtrasada)} a pagar atrasado`:''}</div>` : ''}
     </div>
+
+    ${(() => {
+      const fluxo = buildCashFlow30();
+      const menor = fluxo.reduce((min,d)=> d.saldoAcumulado < min.saldoAcumulado ? d : min, fluxo[0]);
+      return `
+      <div class="section-title">fluxo de caixa · próximos 30 dias</div>
+      <div class="chart-wrap"><canvas id="chartFluxoCaixa"></canvas></div>
+      ${menor.saldoAcumulado < 0 ? `<div class="empty-note" style="color:var(--red);">⚠ Se nada além do já cadastrado entrar ou sair, seu saldo projetado fica negativo (${fmt(menor.saldoAcumulado)}) em ${new Date(menor.date+'T00:00:00').toLocaleDateString('pt-BR')}.</div>` : `<div class="empty-note">Saldo projetado se mantém positivo nos próximos 30 dias, considerando só o que já está cadastrado.</div>`}
+      `;
+    })()}
 
     <div class="section-title">por tipo de entrada (pendente)</div>
     ${tipoEntries.length===0 ? '<div class="empty-note">Nenhuma entrada pendente. Toque em + para cadastrar uma fonte de renda recorrente.</div>' : `
@@ -1384,6 +1510,8 @@ function attachMainListeners(){
   const next = document.getElementById('nextMonth');
   if(prev) prev.onclick = () => { shiftMonth(-1); };
   if(next) next.onclick = () => { shiftMonth(1); };
+  const exportBtn = document.getElementById('exportMonthBtn');
+  if(exportBtn) exportBtn.onclick = () => exportMonthCSV(state.refMonth);
   const prevP = document.getElementById('prevMonthPrevisao');
   const nextP = document.getElementById('nextMonthPrevisao');
   if(prevP) prevP.onclick = () => { shiftPrevisaoMonth(-1); };
