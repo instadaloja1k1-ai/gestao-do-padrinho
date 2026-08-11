@@ -1083,11 +1083,15 @@ function renderPrevisao(){
 
     <div class="section-title">pendências</div>
     ${(() => {
+      // aluguel de veículo (frota): mostra CADA semana pendente como uma linha própria,
+      // senão uma semana nova que vence some atrás da mais antiga já atrasada
+      const frotaPendentes = pendentes.filter(i=> i.tipo==='frota' && i.direcao!=='saida');
       const nextByRec = {};
       pendentes.forEach(i=>{
+        if(i.tipo==='frota' && i.direcao!=='saida') return; // já tratado acima, uma linha por semana
         if(!nextByRec[i.recId] || i.date < nextByRec[i.recId].date) nextByRec[i.recId] = i;
       });
-      const proximos = Object.values(nextByRec).sort((a,b)=> a.date < b.date ? -1 : 1);
+      const proximos = [...Object.values(nextByRec), ...frotaPendentes].sort((a,b)=> a.date < b.date ? -1 : 1);
       if(proximos.length===0) return '<div class="empty-note">Tudo em dia — nenhuma pendência neste mês.</div>';
       return `<div class="tx-list" style="margin-bottom:28px;">
         ${proximos.map(i=>{
