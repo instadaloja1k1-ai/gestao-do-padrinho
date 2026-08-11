@@ -448,8 +448,16 @@ function normalizeRecurrence(r){
     tipo: 'outro', descricao: '', valor: 0, frequencia: 'semanal',
     diaSemana: 1, diaMes: 1, dataInicio: todayISO(),
     parcelasTotal: null, ativo: true, receivedDates: [],
-    direcao: 'entrada', categoria: '',
+    direcao: 'entrada', categoria: '', custoProduto: null,
   }, r);
+}
+// lucro de uma venda parcelada (tipo 'pix'): valor total vendido - custo do produto
+function vendaProfit(r){
+  const totalVenda = r.frequencia === 'parcelas' ? r.valor * (r.parcelasTotal||1) : r.valor;
+  const custo = r.custoProduto || 0;
+  const lucro = totalVenda - custo;
+  const margemPct = totalVenda>0 ? (lucro/totalVenda)*100 : 0;
+  return { totalVenda, custo, lucro, margemPct };
 }
 // gera as ocorrências de uma recorrência dentro de uma janela explícita [rangeStart, rangeEnd]
 function nextOccurrences(rec, rangeStart, rangeEnd){
@@ -1032,6 +1040,18 @@ function exportMonthCSV(refMonth){
     });
   }
 
+  const vendas = state.data.recurrences.map(normalizeRecurrence)
+    .filter(r => r.tipo==='pix' && r.direcao!=='saida' && r.custoProduto != null);
+  if(vendas.length>0){
+    rows.push([]);
+    rows.push(['Lucro em vendas parceladas']);
+    rows.push(['Descrição','Valor total da venda','Custo do produto','Lucro','Margem']);
+    vendas.forEach(r=>{
+      const p = vendaProfit(r);
+      rows.push([r.descricao || 'Venda parcelada', csvNumber(p.totalVenda), csvNumber(p.custo), csvNumber(p.lucro), `${p.margemPct.toFixed(0)}%`]);
+    });
+  }
+
   const csv = '﻿' + rows.map(r => r.map(csvField).join(';')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
@@ -1122,6 +1142,25 @@ function renderResumo(){
         <span style="font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--gold);">${fmt(totalEmprestado+totalJuros+totalMulta)}</span>
       </div>
     </div>
+    ${(() => {
+      const vendas = state.data.recurrences.map(normalizeRecurrence)
+        .filter(r => r.tipo==='pix' && r.direcao!=='saida' && r.ativo!==false && r.custoProduto != null);
+      if(vendas.length===0) return '';
+      const lucroTotal = vendas.reduce((s,r)=>s+vendaProfit(r).lucro,0);
+      const custoTotal = vendas.reduce((s,r)=>s+vendaProfit(r).custo,0);
+      const vendaTotal = vendas.reduce((s,r)=>s+vendaProfit(r).totalVenda,0);
+      const margemMedia = vendaTotal>0 ? (lucroTotal/vendaTotal)*100 : 0;
+      return `
+      <div class="section-title">lucro em vendas parceladas</div>
+      <div class="loan-summary-card">
+        <div class="loan-summary-row"><span class="balance-col-label">Valor total vendido</span><span style="font-family:var(--font-mono);font-size:17px;">${fmt(vendaTotal)}</span></div>
+        <div class="loan-summary-row"><span class="balance-col-label">Custo dos produtos</span><span style="font-family:var(--font-mono);font-size:17px;color:var(--red);">${fmt(custoTotal)}</span></div>
+        <div class="loan-summary-row" style="border-top:1px solid var(--border);padding-top:10px;margin-top:2px;">
+          <span class="balance-col-label" style="color:var(--text)">Lucro (margem ${margemMedia.toFixed(0)}%)</span>
+          <span style="font-family:var(--font-mono);font-size:17px;font-weight:600;color:${lucroTotal>=0?'var(--green)':'var(--red)'};">${fmt(lucroTotal)}</span>
+        </div>
+      </div>`;
+    })()}
   `;
 }
 
@@ -1382,6 +1421,8 @@ function recCardHtml(r){
   const veiculo = r.veiculoId ? state.data.vehicles.find(v=>v.id===r.veiculoId) : null;
   const info = tipoInfo(r);
   const isSaida = r.direcao === 'saida';
+  const isVenda = r.tipo === 'pix' && !isSaida && r.custoProduto != null;
+  const profit = isVenda ? vendaProfit(r) : null;
   return `
     <div class="rec-card" style="opacity:${r.ativo===false?0.5:1}">
       <div class="rec-card-top">
@@ -1391,6 +1432,12 @@ function recCardHtml(r){
         </div>
         <div class="toggle ${r.ativo!==false?'on':''}" data-toggle-rec="${r.id}" data-current="${r.ativo!==false}"><div class="toggle-dot"></div></div>
       </div>
+      ${profit ? `
+      <div style="display:flex;flex-direction:column;gap:2px;padding-top:6px;border-top:1px solid #211C14;">
+        <div class="loan-summary-row"><span class="balance-col-label">Valor total da venda</span><span style="font-family:var(--font-mono);font-size:13px;">${fmt(profit.totalVenda)}</span></div>
+        <div class="loan-summary-row"><span class="balance-col-label">Custo do produto</span><span style="font-family:var(--font-mono);font-size:13px;color:var(--red);">${fmt(profit.custo)}</span></div>
+        <div class="loan-summary-row"><span class="balance-col-label" style="color:var(--text)">Lucro</span><span style="font-family:var(--font-mono);font-size:14px;font-weight:600;color:${profit.lucro>=0?'var(--green)':'var(--red)'};">${fmt(profit.lucro)} (${profit.margemPct.toFixed(0)}%)</span></div>
+      </div>` : ''}
       <div class="rec-actions">
         <span></span>
         <button class="trash-btn-loan" data-delete-rec="${r.id}">✕ excluir</button>
@@ -1735,6 +1782,10 @@ function openRecurrenceForm(){
       <input id="recDesc" placeholder="Ex: Aluguel dos 3 carros">
       <label class="field-label">Valor por ocorrência</label>
       <input id="recValor" inputmode="decimal" placeholder="0,00">
+      <div id="custoField" style="display:none;">
+        <label class="field-label">Custo do produto (opcional, pra calcular seu lucro)</label>
+        <input id="recCusto" inputmode="decimal" placeholder="0,00">
+      </div>
 
       <label class="field-label">Frequência</label>
       <div class="segmented">
@@ -1770,13 +1821,17 @@ function openRecurrenceForm(){
   const tipoField = overlay.querySelector('#tipoField');
   const categoriaField = overlay.querySelector('#categoriaField');
   const veiculoField = overlay.querySelector('#veiculoField');
+  const custoField = overlay.querySelector('#custoField');
   const recTipoSelect = overlay.querySelector('#recTipo');
   const segEntrada = overlay.querySelector('#segEntrada');
   const segSaida = overlay.querySelector('#segSaida');
   const sheetTitle = overlay.querySelector('.sheet-title');
   const saveBtnLabel = () => saveBtn.textContent = direcao==='saida' ? 'Salvar gasto fixo' : 'Salvar fonte de renda';
 
-  function syncVeiculoField(){ veiculoField.style.display = (direcao==='entrada' && recTipoSelect.value === 'frota') ? '' : 'none'; }
+  function syncVeiculoField(){
+    veiculoField.style.display = (direcao==='entrada' && recTipoSelect.value === 'frota') ? '' : 'none';
+    custoField.style.display = (direcao==='entrada' && recTipoSelect.value === 'pix') ? '' : 'none';
+  }
   function setDirecao(d){
     direcao = d;
     segEntrada.classList.toggle('active-income', d==='entrada');
@@ -1845,6 +1900,10 @@ function openRecurrenceForm(){
     if(direcao==='entrada' && rec.tipo === 'frota'){
       const vId = overlay.querySelector('#recVeiculo').value;
       if(vId) rec.veiculoId = vId;
+    }
+    if(direcao==='entrada' && rec.tipo === 'pix'){
+      const custo = parseBR(overlay.querySelector('#recCusto').value);
+      if(!isNaN(custo) && custo >= 0) rec.custoProduto = custo;
     }
     if(frequencia === 'semanal'){
       rec.diaSemana = parseInt(overlay.querySelector('#recDiaSemana').value, 10);
