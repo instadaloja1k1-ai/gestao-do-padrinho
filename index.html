@@ -563,6 +563,32 @@ function buildCashFlow30(){
   }
   return dias;
 }
+// valores e datas de recebimento dos empréstimos ativos dentro de uma janela [rangeStart, rangeEnd]
+// (parcela a parcela nos parcelados; data de vencimento nos demais modos)
+function buildLoanForecastItems(rangeStart, rangeEnd){
+  const items = [];
+  state.data.loans.map(normalizeLoan).filter(l=>l.status!=='paid').forEach(l=>{
+    if(l.calcMode === 'parcelado'){
+      if(!l.primeiraParcelaData) return;
+      const { valorParcela } = computeLoanAmounts(l, new Date());
+      const pagas = l.parcelasPagasCount||0;
+      for(let i=pagas; i<(l.numParcelas||0); i++){
+        const d = midnight(addMonths(new Date(l.primeiraParcelaData+'T00:00:00'), i));
+        if(d >= rangeStart && d <= rangeEnd){
+          items.push({ date: toISO(d), valor: valorParcela, borrower: l.borrower, label: `parcela ${i+1}/${l.numParcelas}`, loanId: l.id });
+        }
+      }
+    }else if(l.dueDate){
+      const due = midnight(new Date(l.dueDate+'T00:00:00'));
+      if(due >= rangeStart && due <= rangeEnd){
+        const { total } = computeLoanAmounts(l, due);
+        items.push({ date: toISO(due), valor: total, borrower: l.borrower, label: 'vencimento', loanId: l.id });
+      }
+    }
+  });
+  items.sort((a,b)=> a.date < b.date ? -1 : 1);
+  return items;
+}
 // calcula a janela de datas a olhar para um mês de referência da Previsão
 function previsaoRange(refDate){
   const hoje = midnight(new Date());
@@ -1324,6 +1350,30 @@ function renderPrevisao(){
           </div>
         `;}).join('')}
       </div>`;
+    })()}
+
+    ${(() => {
+      const loanItems = buildLoanForecastItems(rangeStart, rangeEnd);
+      const totalLoanReceivable = loanItems.reduce((s,i)=>s+i.valor,0);
+      return `
+      <div class="section-title">empréstimos a receber${loanItems.length>0 ? ` · ${fmt(totalLoanReceivable)}` : ''}</div>
+      ${loanItems.length===0 ? '<div class="empty-note">Nenhum recebimento de empréstimo previsto neste mês.</div>' : `
+      <div class="tx-list" style="margin-bottom:28px;">
+        ${loanItems.map(i=>{
+          const overdue = midnight(new Date(i.date+'T00:00:00')) < hoje;
+          return `
+          <div class="tx-row">
+            <div class="tx-dot" style="background:var(--gold)"></div>
+            <div class="tx-info">
+              <div class="tx-desc">${escapeHtml(i.borrower)} · ${i.label}</div>
+              <div class="tx-meta">Empréstimo · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')}</div>
+            </div>
+            <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+            <span class="status-pill ${overdue?'manutencao':'disponivel'}" style="cursor:default;">${overdue?'Atrasado':'A receber'}</span>
+          </div>
+        `;}).join('')}
+      </div>`}
+      `;
     })()}
 
     <div class="section-title">fontes cadastradas</div>
