@@ -279,6 +279,13 @@ const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate()+n); ret
 const addMonths = (d, n) => { const r = new Date(d); r.setMonth(r.getMonth()+n); return r; };
 const toISO = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const escapeHtml = s => (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const maskCPF = v => (v||'').replace(/\D/g,'').slice(0,11)
+  .replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+const maskPhone = v => {
+  const d = (v||'').replace(/\D/g,'').slice(0,11);
+  if(d.length <= 10) return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{4})(\d{1,4})$/,'$1-$2');
+  return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{5})(\d{1,4})$/,'$1-$2');
+};
 function showError(msg){
   const el = document.getElementById('errorBanner');
   el.textContent = msg; el.style.display = 'block';
@@ -780,7 +787,7 @@ function renderPrevisaoCharts(){
 
 // ---------- state ----------
 const state = {
-  data: { transactions: [], loans: [], recurrences: [], vehicles: [] },
+  data: { transactions: [], loans: [], recurrences: [], vehicles: [], clientes: [], motoristas: [] },
   tab: 'resumo',
   refMonth: new Date(),
   previsaoRefMonth: new Date(),
@@ -793,6 +800,8 @@ const state = {
   unsubUsers: null,
   unsubRec: null,
   unsubVehicles: null,
+  unsubClientes: null,
+  unsubMotoristas: null,
 };
 
 // =====================================================================
@@ -892,6 +901,9 @@ function detachListeners(){
   state.unsubTx = state.unsubLoans = state.unsubUsers = state.unsubRec = null;
   if(state.unsubVehicles) state.unsubVehicles();
   state.unsubVehicles = null;
+  if(state.unsubClientes) state.unsubClientes();
+  if(state.unsubMotoristas) state.unsubMotoristas();
+  state.unsubClientes = state.unsubMotoristas = null;
 }
 
 function attachDataListeners(uid){
@@ -919,6 +931,18 @@ function attachDataListeners(uid){
       state.data.vehicles = qs.docs.map(d => ({ id: d.id, ...d.data() }));
       render();
     }, err => showError('Erro ao carregar frota: '+err.message));
+  if(state.unsubClientes) state.unsubClientes();
+  state.unsubClientes = db.collection('users').doc(uid).collection('clientes')
+    .onSnapshot(qs => {
+      state.data.clientes = qs.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, err => showError('Erro ao carregar clientes: '+err.message));
+  if(state.unsubMotoristas) state.unsubMotoristas();
+  state.unsubMotoristas = db.collection('users').doc(uid).collection('motoristas')
+    .onSnapshot(qs => {
+      state.data.motoristas = qs.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, err => showError('Erro ao carregar motoristas: '+err.message));
 }
 
 function attachUsersListener(){
@@ -973,6 +997,12 @@ function deleteRecurrence(id){ return dataCol('recurrences').doc(id).delete().ca
 function addVehicle(v){ return dataCol('vehicles').add(v).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateVehicle(id, patch){ return dataCol('vehicles').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteVehicle(id){ return dataCol('vehicles').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function addCliente(c){ return dataCol('clientes').add(c).catch(e=>showError('Erro ao salvar: '+e.message)); }
+function updateCliente(id, patch){ return dataCol('clientes').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
+function deleteCliente(id){ return dataCol('clientes').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function addMotorista(m){ return dataCol('motoristas').add(m).catch(e=>showError('Erro ao salvar: '+e.message)); }
+function updateMotorista(id, patch){ return dataCol('motoristas').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
+function deleteMotorista(id){ return dataCol('motoristas').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
 function toggleOccurrence(recId, date, valor, currentlyReceived){
   const rec = state.data.recurrences.find(r=>r.id===recId);
   if(!rec) return;
@@ -1405,6 +1435,9 @@ function renderFrota(){
     ${totalJurosMulta>0 ? `<div class="empty-note" style="color:var(--red);">⚠ ${fmt(totalJurosMulta)} em multa/juros por atraso acumulados na frota</div>` : ''}
     <div class="section-title">sua frota</div>
     ${vs.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : vs.map(v=>vehicleCardHtml(v, pend[v.id], profit[v.id])).join('')}
+    <div class="section-title">motoristas cadastrados</div>
+    ${state.data.motoristas.length===0 ? '<div class="empty-note">Nenhum motorista cadastrado ainda.</div>' : state.data.motoristas.map(motoristaCardHtml).join('')}
+    <button class="save-btn" id="openAddMotorista" style="margin-top:10px;">+ Motorista</button>
   `;
 }
 function vehicleCardHtml(v, pend, profit){
@@ -1497,6 +1530,31 @@ function recCardHtml(r){
   `;
 }
 
+// ---------- Cadastro de clientes / motoristas ----------
+function contactCardHtml(c, kind){
+  const editAttr = kind === 'cliente' ? `data-edit-cliente="${c.id}"` : `data-edit-motorista="${c.id}"`;
+  const delAttr = kind === 'cliente' ? `data-delete-cliente="${c.id}"` : `data-delete-motorista="${c.id}"`;
+  return `
+    <div class="loan-card">
+      <div class="loan-card-top">
+        <div class="loan-borrower">${escapeHtml(c.nomeCompleto) || '(sem nome)'}</div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <button class="icon-btn" ${editAttr} title="Editar">✎</button>
+          <button class="trash-btn" ${delAttr}>✕</button>
+        </div>
+      </div>
+      ${c.rg ? `<div class="loan-summary-row"><span class="balance-col-label">RG</span><span style="font-family:var(--font-mono);font-size:14px;">${escapeHtml(c.rg)}</span></div>` : ''}
+      ${c.cpf ? `<div class="loan-summary-row"><span class="balance-col-label">CPF</span><span style="font-family:var(--font-mono);font-size:14px;">${escapeHtml(c.cpf)}</span></div>` : ''}
+      ${c.endereco ? `<div class="loan-summary-row"><span class="balance-col-label">Endereço</span><span style="font-size:13px;text-align:right;max-width:65%;">${escapeHtml(c.endereco)}</span></div>` : ''}
+      ${c.telefone1 ? `<div class="loan-summary-row"><span class="balance-col-label">Telefone 1</span><span style="font-family:var(--font-mono);font-size:14px;">${escapeHtml(c.telefone1)}</span></div>` : ''}
+      ${c.telefone2 ? `<div class="loan-summary-row"><span class="balance-col-label">Telefone 2</span><span style="font-family:var(--font-mono);font-size:14px;">${escapeHtml(c.telefone2)}</span></div>` : ''}
+      ${(!c.rg && !c.cpf && !c.endereco && !c.telefone1 && !c.telefone2) ? '<div class="empty-note" style="padding:4px 0;">Sem dados adicionais cadastrados.</div>' : ''}
+    </div>
+  `;
+}
+function clienteCardHtml(c){ return contactCardHtml(c, 'cliente'); }
+function motoristaCardHtml(m){ return contactCardHtml(m, 'motorista'); }
+
 // ---------- Empréstimos ----------
 function loanCardHtml(l){
   const isPaid = l.status === 'paid';
@@ -1566,6 +1624,9 @@ function renderEmprestimos(){
     <div class="section-title">ativos</div>
     ${active.length===0 ? '<div class="empty-note">Nenhum empréstimo ativo. Toque em + para registrar.</div>' : active.map(loanCardHtml).join('')}
     ${paid.length>0 ? `<div class="section-title">quitados</div>${paid.map(loanCardHtml).join('')}` : ''}
+    <div class="section-title">clientes cadastrados</div>
+    ${state.data.clientes.length===0 ? '<div class="empty-note">Nenhum cliente cadastrado ainda.</div>' : state.data.clientes.map(clienteCardHtml).join('')}
+    <button class="save-btn" id="openAddCliente" style="margin-top:10px;">+ Cliente</button>
   `;
 }
 
@@ -1679,6 +1740,24 @@ function attachMainListeners(){
       const next = order[(order.indexOf(current)+1) % order.length];
       updateVehicle(id, { status: next });
     };
+  });
+
+  // clientes (empréstimos) e motoristas (frota)
+  const addClienteBtn = document.getElementById('openAddCliente');
+  if(addClienteBtn) addClienteBtn.onclick = () => openContactForm('cliente');
+  const addMotoristaBtn = document.getElementById('openAddMotorista');
+  if(addMotoristaBtn) addMotoristaBtn.onclick = () => openContactForm('motorista');
+  document.querySelectorAll('[data-edit-cliente]').forEach(btn=>{
+    btn.onclick = () => openContactForm('cliente', state.data.clientes.find(c=>c.id===btn.getAttribute('data-edit-cliente')));
+  });
+  document.querySelectorAll('[data-edit-motorista]').forEach(btn=>{
+    btn.onclick = () => openContactForm('motorista', state.data.motoristas.find(m=>m.id===btn.getAttribute('data-edit-motorista')));
+  });
+  document.querySelectorAll('[data-delete-cliente]').forEach(btn=>{
+    btn.onclick = () => deleteCliente(btn.getAttribute('data-delete-cliente'));
+  });
+  document.querySelectorAll('[data-delete-motorista]').forEach(btn=>{
+    btn.onclick = () => deleteMotorista(btn.getAttribute('data-delete-motorista'));
   });
 
   // admin: usuários
@@ -1982,6 +2061,67 @@ function openRecurrenceForm(){
 
 // ---------- Loan form ----------
 // ---------- Vehicle (frota) form ----------
+function openContactForm(kind, existing){
+  const isEdit = !!existing;
+  const isCliente = kind === 'cliente';
+  const title = isEdit ? (isCliente ? 'Editar cliente' : 'Editar motorista') : (isCliente ? 'Novo cliente' : 'Novo motorista');
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet" role="dialog">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">${title}</div>
+        <button class="icon-btn" id="closeContactForm">✕</button>
+      </div>
+      <label class="field-label">Nome completo</label>
+      <input id="contactNome" placeholder="Nome completo" value="${escapeHtml(existing?.nomeCompleto||'')}">
+      <label class="field-label">RG</label>
+      <input id="contactRg" placeholder="Ex: 12.345.678-9" value="${escapeHtml(existing?.rg||'')}">
+      <label class="field-label">CPF</label>
+      <input id="contactCpf" placeholder="000.000.000-00" inputmode="numeric" value="${escapeHtml(existing?.cpf||'')}">
+      <label class="field-label">Endereço</label>
+      <input id="contactEndereco" placeholder="Rua, número, bairro, cidade" value="${escapeHtml(existing?.endereco||'')}">
+      <label class="field-label">Telefone 1</label>
+      <input id="contactTelefone1" placeholder="(00) 00000-0000" inputmode="numeric" value="${escapeHtml(existing?.telefone1||'')}">
+      <label class="field-label">Telefone 2 (opcional)</label>
+      <input id="contactTelefone2" placeholder="(00) 00000-0000" inputmode="numeric" value="${escapeHtml(existing?.telefone2||'')}">
+      <button class="save-btn" id="contactSave" ${existing?.nomeCompleto ? '' : 'disabled'}>${isEdit ? 'Salvar alterações' : (isCliente ? 'Salvar cliente' : 'Salvar motorista')}</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const nomeInput = overlay.querySelector('#contactNome');
+  const cpfInput = overlay.querySelector('#contactCpf');
+  const tel1Input = overlay.querySelector('#contactTelefone1');
+  const tel2Input = overlay.querySelector('#contactTelefone2');
+  const saveBtn = overlay.querySelector('#contactSave');
+  nomeInput.oninput = () => { saveBtn.disabled = !nomeInput.value.trim(); };
+  cpfInput.oninput = () => { cpfInput.value = maskCPF(cpfInput.value); };
+  tel1Input.oninput = () => { tel1Input.value = maskPhone(tel1Input.value); };
+  tel2Input.oninput = () => { tel2Input.value = maskPhone(tel2Input.value); };
+
+  overlay.querySelector('#closeContactForm').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+
+  saveBtn.onclick = () => {
+    const nomeCompleto = nomeInput.value.trim();
+    if(!nomeCompleto) return;
+    const payload = {
+      nomeCompleto,
+      rg: overlay.querySelector('#contactRg').value.trim(),
+      cpf: cpfInput.value.trim(),
+      endereco: overlay.querySelector('#contactEndereco').value.trim(),
+      telefone1: tel1Input.value.trim(),
+      telefone2: tel2Input.value.trim(),
+    };
+    if(isEdit){
+      (isCliente ? updateCliente(existing.id, payload) : updateMotorista(existing.id, payload));
+    }else{
+      (isCliente ? addCliente(payload) : addMotorista(payload));
+    }
+    overlay.remove();
+  };
+}
 function openVehicleForm(){
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
