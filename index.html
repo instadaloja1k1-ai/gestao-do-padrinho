@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Gestão do Padrinho">
 <meta name="theme-color" content="#080604">
-<link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest_2.json">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="favicon-32.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -229,6 +229,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <script>
 'use strict';
@@ -802,7 +803,12 @@ const state = {
   unsubVehicles: null,
   unsubClientes: null,
   unsubMotoristas: null,
+  searchLoans: '',
+  searchVehicles: '',
+  searchClientes: '',
+  searchMotoristas: '',
 };
+const norm = s => (s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
 // =====================================================================
 // AUTENTICAÇÃO / GATE
@@ -1051,6 +1057,61 @@ function render(){
   else mainEl.innerHTML = `<div class="tab-content">${renderUsuarios()}</div>`;
   attachMainListeners();
   renderCharts();
+  checkAndNotifyDueSoon();
+}
+
+// ---------- avisos locais de vencimento (empréstimos e frota) ----------
+// Funciona só com o app aberto/recente (checagem ao carregar/atualizar a tela).
+// Um push de verdade com o app fechado exigiria um servidor (Firebase Cloud Messaging) — fora do escopo por ora.
+function checkAndNotifyDueSoon(){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  if(!state.data || !state.currentUser) return;
+  const key = 'dueAlertsShown_' + state.viewingUid + '_' + todayISO();
+  if(localStorage.getItem(key)) return;
+  const hoje = midnight(new Date());
+  const amanha = addDays(hoje, 1);
+  const itens = [];
+  state.data.loans.map(normalizeLoan).filter(l=>l.status!=='paid').forEach(l=>{
+    let due = null;
+    if(l.calcMode === 'parcelado' && l.primeiraParcelaData){
+      due = midnight(addMonths(new Date(l.primeiraParcelaData+'T00:00:00'), l.parcelasPagasCount||0));
+    }else if(l.dueDate){
+      due = midnight(new Date(l.dueDate+'T00:00:00'));
+    }
+    if(due && due <= amanha){
+      const status = due < hoje ? 'atrasado' : (due.getTime()===hoje.getTime() ? 'vence hoje' : 'vence amanhã');
+      itens.push(`Empréstimo · ${l.borrower} — ${status}`);
+    }
+  });
+  try{
+    const pend = frotaPendingByVehicle();
+    Object.keys(pend).forEach(vid=>{
+      const v = state.data.vehicles.find(x=>x.id===vid);
+      if(v) itens.push(`Frota · ${v.placa || v.modelo} — aluguel pendente`);
+    });
+  }catch(e){ /* ignora se ainda não carregou */ }
+  if(itens.length === 0) return;
+  localStorage.setItem(key, '1');
+  const body = itens.slice(0,5).join('\n') + (itens.length>5 ? `\n+ ${itens.length-5} outro(s)` : '');
+  if(!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then(reg=>{
+    reg.showNotification('Gestão do Padrinho — vencimentos', {
+      body, icon: 'icon-192.png', badge: 'icon-192.png', tag: 'due-alerts-' + todayISO(),
+    });
+  }).catch(()=>{});
+}
+function enableDueAlerts(){
+  if(!('Notification' in window)){ showError('Seu navegador não suporta notificações.'); return; }
+  Notification.requestPermission().then(perm=>{
+    if(perm === 'granted'){
+      showToast('✓ Avisos de vencimento ativados');
+      localStorage.removeItem('dueAlertsShown_' + state.viewingUid + '_' + todayISO());
+      checkAndNotifyDueSoon();
+      render();
+    }else{
+      showError('Permissão de notificação não concedida.');
+    }
+  });
 }
 
 // ---------- exportar relatório do mês (CSV, abre direto no Excel) ----------
@@ -1122,6 +1183,31 @@ function exportMonthCSV(refMonth){
   showToast('✓ Relatório exportado');
 }
 
+// ---------- backup completo (JSON) ----------
+function exportFullBackup(){
+  const backup = {
+    geradoEm: new Date().toISOString(),
+    usuario: state.viewingUsername || '',
+    transactions: state.data.transactions,
+    loans: state.data.loans,
+    recurrences: state.data.recurrences,
+    vehicles: state.data.vehicles,
+    clientes: state.data.clientes,
+    motoristas: state.data.motoristas,
+  };
+  const json = JSON.stringify(backup, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gestao-padrinho_backup_${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast('✓ Backup exportado');
+}
+
 // ---------- Resumo ----------
 function renderResumo(){
   const refMonth = state.refMonth;
@@ -1169,7 +1255,9 @@ function renderResumo(){
         </div>
       </div>
     </div>
-    <button class="small-btn" id="exportMonthBtn" style="width:100%;margin-bottom:22px;padding:10px 0;">⬇ Exportar relatório do mês (CSV)</button>
+    <button class="small-btn" id="exportMonthBtn" style="width:100%;margin-bottom:10px;padding:10px 0;">⬇ Exportar relatório do mês (CSV)</button>
+    <button class="small-btn" id="exportBackupBtn" style="width:100%;margin-bottom:${(('Notification' in window) && Notification.permission !== 'granted') ? '10px' : '22px'};padding:10px 0;">⬇ Exportar backup completo (JSON)</button>
+    ${('Notification' in window) && Notification.permission !== 'granted' ? `<button class="small-btn" id="enableAlertsBtn" style="width:100%;margin-bottom:22px;padding:10px 0;">🔔 Ativar avisos de vencimento</button>` : ''}
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-label">Lançamentos no mês</div><div class="stat-value">${monthTx.length}</div></div>
       <div class="stat-card"><div class="stat-label">Ticket médio de gasto</div><div class="stat-value">${fmt(ticketMedio)}</div></div>
@@ -1434,9 +1522,23 @@ function renderFrota(){
     <div class="chart-wrap"><canvas id="chartFrotaLucro"></canvas></div>`}
     ${totalJurosMulta>0 ? `<div class="empty-note" style="color:var(--red);">⚠ ${fmt(totalJurosMulta)} em multa/juros por atraso acumulados na frota</div>` : ''}
     <div class="section-title">sua frota</div>
-    ${vs.length===0 ? '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>' : vs.map(v=>vehicleCardHtml(v, pend[v.id], profit[v.id])).join('')}
+    ${vs.length>1 ? `<input id="searchVehicles" placeholder="Buscar por modelo, placa ou motorista..." value="${escapeHtml(state.searchVehicles)}" style="margin-bottom:14px;">` : ''}
+    ${(() => {
+      const q = norm(state.searchVehicles);
+      const filtered = q ? vs.filter(v=>norm(v.modelo).includes(q) || norm(v.placa).includes(q) || norm(v.motorista).includes(q)) : vs;
+      if(vs.length===0) return '<div class="empty-note">Nenhum carro cadastrado ainda. Toque em + para adicionar.</div>';
+      if(filtered.length===0) return '<div class="empty-note">Nenhum carro encontrado para essa busca.</div>';
+      return filtered.map(v=>vehicleCardHtml(v, pend[v.id], profit[v.id])).join('');
+    })()}
     <div class="section-title">motoristas cadastrados</div>
-    ${state.data.motoristas.length===0 ? '<div class="empty-note">Nenhum motorista cadastrado ainda.</div>' : state.data.motoristas.map(motoristaCardHtml).join('')}
+    ${state.data.motoristas.length>1 ? `<input id="searchMotoristas" placeholder="Buscar motorista..." value="${escapeHtml(state.searchMotoristas)}" style="margin-bottom:14px;">` : ''}
+    ${(() => {
+      const q = norm(state.searchMotoristas);
+      const filtered = q ? state.data.motoristas.filter(m=>norm(m.nomeCompleto).includes(q)) : state.data.motoristas;
+      if(state.data.motoristas.length===0) return '<div class="empty-note">Nenhum motorista cadastrado ainda.</div>';
+      if(filtered.length===0) return '<div class="empty-note">Nenhum motorista encontrado para essa busca.</div>';
+      return filtered.map(motoristaCardHtml).join('');
+    })()}
     <button class="save-btn" id="openAddMotorista" style="margin-top:10px;">+ Motorista</button>
   `;
 }
@@ -1456,6 +1558,13 @@ function vehicleCardHtml(v, pend, profit){
           <span class="status-pill ${v.status||'disponivel'}" data-cycle-status="${v.id}" data-current="${v.status||'disponivel'}">${statusLabel}</span>
           <button class="trash-btn" data-delete-vehicle="${v.id}">✕</button>
         </div>
+      </div>
+      <div class="loan-summary-row">
+        <span class="balance-col-label">Motorista</span>
+        <span style="display:flex;align-items:center;gap:6px;">
+          <span style="font-size:14px;${v.motorista?'':'color:var(--dim);'}">${v.motorista ? escapeHtml(v.motorista) : 'não atribuído'}</span>
+          <button class="icon-btn" style="width:24px;height:24px;font-size:12px;" data-assign-motorista="${v.id}" title="Atribuir motorista">✎</button>
+        </span>
       </div>
       ${pend ? `
       <div class="vehicle-late">
@@ -1569,6 +1678,7 @@ function loanCardHtml(l){
         <div class="loan-borrower ${isPaid ? 'paid' : 'owed'}">${escapeHtml(l.borrower)}</div>
         ${isPaid ? '<span class="paid-badge">✓ quitado</span>' : `<button class="small-btn" data-registrar-parcela="${l.id}">Registrar parcela</button>`}
       </div>
+      <button class="small-btn" style="margin-bottom:8px;" data-gerar-recibo="${l.id}">📄 Gerar recibo (PDF)</button>
       <div class="loan-summary-row"><span class="balance-col-label">Data do empréstimo</span><span style="font-family:var(--font-mono);font-size:15px;">${l.startDate ? new Date(l.startDate+'T00:00:00').toLocaleDateString('pt-BR') : '—'}</span></div>
       <div class="loan-summary-row"><span class="balance-col-label">Capital</span><span style="font-family:var(--font-mono);font-size:15px;">${fmt(l.principal)}</span></div>
       <div class="loan-summary-row"><span class="balance-col-label">Juros total${l.principal>0 ? ` (${fmtPct((l.jurosTotal||0)/l.principal*100)})` : ''}</span><span style="font-family:var(--font-mono);font-size:15px;color:var(--gold);">${fmt(juros)}</span></div>
@@ -1589,6 +1699,7 @@ function loanCardHtml(l){
         <div class="loan-borrower ${isPaid ? 'paid' : 'owed'}">${escapeHtml(l.borrower)}</div>
         ${isPaid ? '<span class="paid-badge">✓ quitado</span>' : `<button class="small-btn" data-mark-paid="${l.id}">Dar baixa</button>`}
       </div>
+      <button class="small-btn" style="margin-bottom:8px;" data-gerar-recibo="${l.id}">📄 Gerar recibo (PDF)</button>
       ${(!isPaid && daysLate>0) ? `<span class="overdue-badge">⚠ ${daysLate} dia${daysLate>1?'s':''} de atraso</span>` : ''}
       <div class="loan-summary-row"><span class="balance-col-label">Data do empréstimo</span><span style="font-family:var(--font-mono);font-size:15px;">${l.startDate ? new Date(l.startDate+'T00:00:00').toLocaleDateString('pt-BR') : '—'}</span></div>
       ${l.dueDate ? `<div class="loan-summary-row"><span class="balance-col-label">Data de vencimento</span><span style="font-family:var(--font-mono);font-size:15px;${(!isPaid && daysLate>0) ? 'color:var(--red);' : ''}">${new Date(l.dueDate+'T00:00:00').toLocaleDateString('pt-BR')}</span></div>` : ''}
@@ -1602,6 +1713,92 @@ function loanCardHtml(l){
       <button class="trash-btn-loan" data-delete-loan="${l.id}">✕ excluir</button>
     </div>
   `;
+}
+// ---------- Recibo de empréstimo (PDF) ----------
+function gerarReciboEmprestimo(loanId){
+  const raw = state.data.loans.find(l=>l.id===loanId);
+  if(!raw) return;
+  if(!window.jspdf || !window.jspdf.jsPDF){ showError('Não foi possível carregar o gerador de PDF. Verifique sua conexão e tente novamente.'); return; }
+  const l = normalizeLoan(raw);
+  const isPaid = l.status === 'paid';
+  const cliente = state.data.clientes.find(c => norm(c.nomeCompleto) === norm(l.borrower));
+
+  let valorTotal, descricaoJuros, vencimentoLabel;
+  if(l.calcMode === 'parcelado'){
+    const { total, valorParcela } = computeLoanAmounts(l, new Date());
+    valorTotal = total;
+    descricaoJuros = `Parcelado em ${l.numParcelas}x de ${fmt(valorParcela)}, juros total de ${fmt(l.jurosTotal||0)}.`;
+    vencimentoLabel = l.primeiraParcelaData ? `1ª parcela em ${new Date(l.primeiraParcelaData+'T00:00:00').toLocaleDateString('pt-BR')}` : 'a combinar';
+  }else{
+    const { juros, total } = computeLoanAmounts(l, isPaid ? new Date(l.paidDate+'T00:00:00') : new Date());
+    valorTotal = total;
+    descricaoJuros = l.calcMode==='rate'
+      ? `Juros de ${fmtPct(l.rate)} ao mês (${l.compound?'compostos':'simples'}), totalizando ${fmt(juros)} até a data de hoje.`
+      : `Valor fixo combinado a receber, com juros embutidos de ${fmt(juros)}.`;
+    vencimentoLabel = l.dueDate ? new Date(l.dueDate+'T00:00:00').toLocaleDateString('pt-BR') : 'a combinar';
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  let y = 22;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+  doc.text('RECIBO DE EMPRÉSTIMO', pageW/2, y, { align: 'center' });
+  y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120);
+  doc.text(`Emitido por Gestão do Padrinho em ${new Date().toLocaleDateString('pt-BR')}`, pageW/2, y, { align: 'center' });
+  doc.setTextColor(0);
+  y += 12;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text('Dados do mutuário', 14, y); y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.text(`Nome: ${l.borrower || '—'}`, 14, y); y += 6;
+  if(cliente){
+    if(cliente.cpf){ doc.text(`CPF: ${cliente.cpf}`, 14, y); y += 6; }
+    if(cliente.rg){ doc.text(`RG: ${cliente.rg}`, 14, y); y += 6; }
+    if(cliente.endereco){ doc.text(`Endereço: ${cliente.endereco}`, 14, y); y += 6; }
+    if(cliente.telefone1){ doc.text(`Telefone: ${cliente.telefone1}${cliente.telefone2 ? ' / ' + cliente.telefone2 : ''}`, 14, y); y += 6; }
+  }else{
+    doc.setTextColor(140);
+    doc.text('(cliente não encontrado no cadastro — CPF/RG/endereço não preenchidos)', 14, y);
+    doc.setTextColor(0);
+    y += 6;
+  }
+  y += 6;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+  doc.text('Dados do empréstimo', 14, y); y += 6;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.text(`Valor emprestado: ${fmt(l.principal)}`, 14, y); y += 6;
+  doc.text(`Data do empréstimo: ${l.startDate ? new Date(l.startDate+'T00:00:00').toLocaleDateString('pt-BR') : '—'}`, 14, y); y += 6;
+  doc.text(`Vencimento: ${vencimentoLabel}`, 14, y); y += 6;
+  const jurosLines = doc.splitTextToSize(descricaoJuros, pageW-28);
+  doc.text(jurosLines, 14, y); y += 6*jurosLines.length;
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Valor total ${isPaid ? 'pago' : 'a pagar'}: ${fmt(valorTotal)}`, 14, y); y += 6;
+  doc.setFont('helvetica', 'normal');
+  if(isPaid){ doc.text(`Status: quitado em ${l.paidDate ? new Date(l.paidDate+'T00:00:00').toLocaleDateString('pt-BR') : '—'}`, 14, y); y += 6; }
+  y += 8;
+
+  const declaracao = isPaid
+    ? `Declaro, para os devidos fins, que o empréstimo acima descrito, concedido a ${l.borrower}, foi integralmente quitado no valor total de ${fmt(valorTotal)}.`
+    : `Eu, ${l.borrower}, declaro ter recebido a quantia de ${fmt(l.principal)} a título de empréstimo, comprometendo-me a devolver o valor total de ${fmt(valorTotal)} conforme condições acima.`;
+  doc.setFontSize(10);
+  const declLines = doc.splitTextToSize(declaracao, pageW-28);
+  doc.text(declLines, 14, y); y += 6*declLines.length + 18;
+
+  doc.text('_______________________________', 14, y);
+  doc.text('_______________________________', pageW/2+6, y);
+  y += 5;
+  doc.setFontSize(9);
+  doc.text('Assinatura do credor', 14, y);
+  doc.text('Assinatura do devedor', pageW/2+6, y);
+
+  const safeName = (l.borrower||'recibo').replace(/[^\p{L}\p{N}]+/gu, '_');
+  doc.save(`recibo_${safeName}_${todayISO()}.pdf`);
+  showToast('✓ Recibo gerado');
 }
 function renderEmprestimos(){
   const loans = state.data.loans.map(normalizeLoan);
@@ -1622,10 +1819,27 @@ function renderEmprestimos(){
     <div class="section-title">capital por mutuário</div>
     <div class="chart-wrap"><canvas id="chartEmprestimosCapital"></canvas></div>`}
     <div class="section-title">ativos</div>
-    ${active.length===0 ? '<div class="empty-note">Nenhum empréstimo ativo. Toque em + para registrar.</div>' : active.map(loanCardHtml).join('')}
-    ${paid.length>0 ? `<div class="section-title">quitados</div>${paid.map(loanCardHtml).join('')}` : ''}
+    ${(loans.length>1) ? `<input id="searchLoans" placeholder="Buscar por nome do mutuário..." value="${escapeHtml(state.searchLoans)}" style="margin-bottom:14px;">` : ''}
+    ${(() => {
+      const q = norm(state.searchLoans);
+      const activeF = q ? active.filter(l=>norm(l.borrower).includes(q)) : active;
+      const paidF = q ? paid.filter(l=>norm(l.borrower).includes(q)) : paid;
+      let out = '';
+      out += activeF.length===0
+        ? `<div class="empty-note">${active.length===0 ? 'Nenhum empréstimo ativo. Toque em + para registrar.' : 'Nenhum empréstimo encontrado para essa busca.'}</div>`
+        : activeF.map(loanCardHtml).join('');
+      if(paidF.length>0) out += `<div class="section-title">quitados</div>${paidF.map(loanCardHtml).join('')}`;
+      return out;
+    })()}
     <div class="section-title">clientes cadastrados</div>
-    ${state.data.clientes.length===0 ? '<div class="empty-note">Nenhum cliente cadastrado ainda.</div>' : state.data.clientes.map(clienteCardHtml).join('')}
+    ${state.data.clientes.length>1 ? `<input id="searchClientes" placeholder="Buscar cliente..." value="${escapeHtml(state.searchClientes)}" style="margin-bottom:14px;">` : ''}
+    ${(() => {
+      const q = norm(state.searchClientes);
+      const filtered = q ? state.data.clientes.filter(c=>norm(c.nomeCompleto).includes(q)) : state.data.clientes;
+      if(state.data.clientes.length===0) return '<div class="empty-note">Nenhum cliente cadastrado ainda.</div>';
+      if(filtered.length===0) return '<div class="empty-note">Nenhum cliente encontrado para essa busca.</div>';
+      return filtered.map(clienteCardHtml).join('');
+    })()}
     <button class="save-btn" id="openAddCliente" style="margin-top:10px;">+ Cliente</button>
   `;
 }
@@ -1667,13 +1881,32 @@ function renderUsuarios(){
 }
 
 // ---------- listeners for rendered content ----------
+function bindSearchInput(id, stateKey){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.oninput = () => {
+    const pos = el.selectionStart;
+    state[stateKey] = el.value;
+    render();
+    const el2 = document.getElementById(id);
+    if(el2){ el2.focus(); el2.setSelectionRange(pos, pos); }
+  };
+}
 function attachMainListeners(){
+  bindSearchInput('searchLoans', 'searchLoans');
+  bindSearchInput('searchClientes', 'searchClientes');
+  bindSearchInput('searchVehicles', 'searchVehicles');
+  bindSearchInput('searchMotoristas', 'searchMotoristas');
   const prev = document.getElementById('prevMonth');
   const next = document.getElementById('nextMonth');
   if(prev) prev.onclick = () => { shiftMonth(-1); };
   if(next) next.onclick = () => { shiftMonth(1); };
   const exportBtn = document.getElementById('exportMonthBtn');
   if(exportBtn) exportBtn.onclick = () => exportMonthCSV(state.refMonth);
+  const exportBackupBtn = document.getElementById('exportBackupBtn');
+  if(exportBackupBtn) exportBackupBtn.onclick = exportFullBackup;
+  const enableAlertsBtn = document.getElementById('enableAlertsBtn');
+  if(enableAlertsBtn) enableAlertsBtn.onclick = enableDueAlerts;
   const prevP = document.getElementById('prevMonthPrevisao');
   const nextP = document.getElementById('nextMonthPrevisao');
   if(prevP) prevP.onclick = () => { shiftPrevisaoMonth(-1); };
@@ -1693,6 +1926,9 @@ function attachMainListeners(){
   });
   document.querySelectorAll('[data-delete-loan]').forEach(btn=>{
     btn.onclick = () => deleteLoan(btn.getAttribute('data-delete-loan'));
+  });
+  document.querySelectorAll('[data-gerar-recibo]').forEach(btn=>{
+    btn.onclick = () => gerarReciboEmprestimo(btn.getAttribute('data-gerar-recibo'));
   });
 
   // previsão
@@ -1731,6 +1967,9 @@ function attachMainListeners(){
   if(addVehicleBtn) addVehicleBtn.onclick = openVehicleForm;
   document.querySelectorAll('[data-delete-vehicle]').forEach(btn=>{
     btn.onclick = () => deleteVehicle(btn.getAttribute('data-delete-vehicle'));
+  });
+  document.querySelectorAll('[data-assign-motorista]').forEach(btn=>{
+    btn.onclick = () => openAssignMotoristaForm(btn.getAttribute('data-assign-motorista'));
   });
   document.querySelectorAll('[data-cycle-status]').forEach(el=>{
     el.onclick = () => {
@@ -2142,6 +2381,11 @@ function openVehicleForm(){
         <option value="alugado">Alugado</option>
         <option value="manutencao">Manutenção</option>
       </select>
+      <label class="field-label">Motorista (opcional)</label>
+      <input id="vehicleMotorista" placeholder="Nome do motorista" list="motoristasDatalist" autocomplete="off">
+      <datalist id="motoristasDatalist">
+        ${state.data.motoristas.map(m=>`<option value="${escapeHtml(m.nomeCompleto)}">`).join('')}
+      </datalist>
       <button class="save-btn" id="vehicleSave" disabled>Salvar carro</button>
     </div>
   `;
@@ -2160,7 +2404,36 @@ function openVehicleForm(){
       modelo,
       placa: overlay.querySelector('#vehiclePlaca').value.trim(),
       status: overlay.querySelector('#vehicleStatus').value,
+      motorista: overlay.querySelector('#vehicleMotorista').value.trim(),
     });
+    overlay.remove();
+  };
+}
+function openAssignMotoristaForm(veiculoId){
+  const v = state.data.vehicles.find(v=>v.id===veiculoId);
+  if(!v) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  overlay.innerHTML = `
+    <div class="sheet" role="dialog">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <div class="sheet-title">Motorista · ${escapeHtml(v.modelo)}</div>
+        <button class="icon-btn" id="closeAssignMotorista">✕</button>
+      </div>
+      <label class="field-label">Motorista</label>
+      <input id="assignMotorista" placeholder="Nome do motorista" list="motoristasDatalist2" autocomplete="off" value="${escapeHtml(v.motorista||'')}">
+      <datalist id="motoristasDatalist2">
+        ${state.data.motoristas.map(m=>`<option value="${escapeHtml(m.nomeCompleto)}">`).join('')}
+      </datalist>
+      <button class="save-btn" id="assignMotoristaSave">Salvar</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#closeAssignMotorista').onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+  overlay.querySelector('#assignMotoristaSave').onclick = () => {
+    updateVehicle(veiculoId, { motorista: overlay.querySelector('#assignMotorista').value.trim() });
     overlay.remove();
   };
 }
@@ -2218,7 +2491,10 @@ function openLoanForm(){
         <button class="icon-btn" id="closeLoanForm">✕</button>
       </div>
       <label class="field-label">Para quem</label>
-      <input id="loanBorrower" placeholder="Nome da pessoa">
+      <input id="loanBorrower" placeholder="Nome da pessoa" list="clientesDatalist" autocomplete="off">
+      <datalist id="clientesDatalist">
+        ${state.data.clientes.map(c=>`<option value="${escapeHtml(c.nomeCompleto)}">`).join('')}
+      </datalist>
       <label class="field-label">Valor emprestado</label>
       <input id="loanPrincipal" inputmode="decimal" placeholder="0,00">
 

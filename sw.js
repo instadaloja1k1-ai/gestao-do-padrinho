@@ -1,5 +1,5 @@
-const CACHE_NAME = 'gestao-do-padrinho-v1';
-const APP_SHELL = ['./index.html', './manifest.json', './icon.svg'];
+const CACHE_NAME = 'gestao-do-padrinho-v2';
+const APP_SHELL = ['./index.html', './manifest_2.json', './icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
