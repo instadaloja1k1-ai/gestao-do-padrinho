@@ -195,6 +195,22 @@
   .status-pill.alugado{background:#17251F;color:var(--green);border:1px solid #274A3B;}
   .status-pill.disponivel{background:#1B2A3A;color:#8FB4D9;border:1px solid #2C4459;}
   .status-pill.manutencao{background:#3A2323;color:var(--red);border:1px solid #5A3333;}
+
+  /* ---- celulares tab ---- */
+  .cel-check-list{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px;}
+  .cel-check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface2);
+    border:1px solid var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;}
+  .cel-check-row input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold);margin:0;flex-shrink:0;}
+  .cel-check-label{flex:1;font-size:14px;}
+  .cel-check-cost{font-family:var(--font-mono);font-size:13px;color:var(--dim);white-space:nowrap;}
+  .cel-config-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .cel-config-row input{flex:1;}
+  .cel-config-row input.cel-config-num{max-width:90px;flex:none;}
+  .cel-remove-row{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;}
+  .cel-pay-row{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 16px;margin-bottom:10px;}
+  .cel-pay-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:10px;}
+  .cel-pay-label{font-weight:600;font-size:14px;}
+  .cel-pay-taxa{font-size:11px;color:var(--dim);white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -220,6 +236,7 @@
     <button class="tab-btn" data-tab="previsao"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span><span class="tab-label">Previsão</span></button>
     <button class="tab-btn" data-tab="frota"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l1.6-4.3A2 2 0 0 1 8.5 5.4h7a2 2 0 0 1 1.9 1.3L19 11"/><rect x="2.5" y="11" width="19" height="6" rx="2"/><circle cx="7" cy="17.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="17" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg></span><span class="tab-label">Frota</span></button>
     <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span><span class="tab-label">Empréstimos</span></button>
+    <button class="tab-btn" data-tab="celulares"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></span><span class="tab-label">Celulares</span></button>
     <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="tab-label">Usuários</span></button>
   </nav>
 </div>
@@ -311,6 +328,56 @@ const TIPOS_RECEITA = {
   outro:    { label: 'Outro',                 color: '#B8BEC7' },
 };
 const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+
+// ---------- celulares (calculadora de negócio) ----------
+const DEFAULT_CEL_CONFIG = {
+  feeTable: [
+    { label: 'Débito', taxa: 1.99 },
+    { label: 'Crédito à vista', taxa: 3.5 },
+    { label: 'Crédito parcelado', taxa: 5 },
+  ],
+  jurosPixMensal: 5,
+  defeitos: [
+    { nome: 'Tela trincada', custo: 150 },
+    { nome: 'Bateria fraca', custo: 80 },
+    { nome: 'Não liga', custo: 200 },
+  ],
+};
+function celConfig(){ return state.data.celConfig || DEFAULT_CEL_CONFIG; }
+function celCustoTotal(calc, cfg){
+  const custoReparo = (calc.defeitosSelecionados||[]).reduce((s,nome)=>{
+    const d = (cfg.defeitos||[]).find(x=>x.nome===nome);
+    return s + (d ? (Number(d.custo)||0) : 0);
+  }, 0) + (parseBR(calc.outrosCustos)||0);
+  const custoFornecedor = parseBR(calc.fornecedor)||0;
+  return { custoFornecedor, custoReparo, custoTotal: custoFornecedor + custoReparo };
+}
+function celPrecoBase(calc, custoTotal){
+  if(calc.modoLucro === 'valor'){
+    const lucro = parseBR(calc.lucroValor)||0;
+    return { lucro, precoBase: custoTotal + lucro };
+  }
+  const pct = parseBR(calc.margemPct)||0;
+  const lucro = custoTotal * pct/100;
+  return { lucro, precoBase: custoTotal + lucro };
+}
+function celFormasPagamento(precoBase, custoTotal, cfg){
+  const rows = [{ label: 'Pix / Dinheiro à vista', taxa: 0, cobrar: precoBase, recebe: precoBase }];
+  (cfg.feeTable||[]).forEach(f=>{
+    const taxa = Number(f.taxa)||0;
+    const cobrar = taxa < 100 ? precoBase / (1 - taxa/100) : precoBase;
+    const recebe = cobrar * (1 - taxa/100);
+    rows.push({ label: f.label, taxa, cobrar, recebe });
+  });
+  return rows.map(r => ({ ...r, lucro: r.recebe - custoTotal, margem: r.recebe > 0 ? (r.recebe - custoTotal)/r.recebe*100 : 0 }));
+}
+function celParceladoPix(precoBase, custoTotal, jurosMensal, numParcelas){
+  const totalRecebido = precoBase * (1 + (jurosMensal/100) * numParcelas);
+  const valorParcela = numParcelas > 0 ? totalRecebido/numParcelas : totalRecebido;
+  const lucro = totalRecebido - custoTotal;
+  const margem = totalRecebido > 0 ? lucro/totalRecebido*100 : 0;
+  return { totalRecebido, valorParcela, lucro, margem };
+}
 function tipoInfo(item){
   if(item.direcao === 'saida') return { label: item.categoria || 'Gasto fixo', color: '#D98A8E' };
   return TIPOS_RECEITA[item.tipo] || TIPOS_RECEITA.outro;
@@ -788,7 +855,7 @@ function renderPrevisaoCharts(){
 
 // ---------- state ----------
 const state = {
-  data: { transactions: [], loans: [], recurrences: [], vehicles: [], clientes: [], motoristas: [] },
+  data: { transactions: [], loans: [], recurrences: [], vehicles: [], clientes: [], motoristas: [], celConfig: null },
   tab: 'resumo',
   refMonth: new Date(),
   previsaoRefMonth: new Date(),
@@ -803,10 +870,13 @@ const state = {
   unsubVehicles: null,
   unsubClientes: null,
   unsubMotoristas: null,
+  unsubCelConfig: null,
   searchLoans: '',
   searchVehicles: '',
   searchClientes: '',
   searchMotoristas: '',
+  celCalc: null,        // form da calculadora de celulares (não persistido, só em memória)
+  celParcelasPix: 3,
 };
 const norm = s => (s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
@@ -910,6 +980,8 @@ function detachListeners(){
   if(state.unsubClientes) state.unsubClientes();
   if(state.unsubMotoristas) state.unsubMotoristas();
   state.unsubClientes = state.unsubMotoristas = null;
+  if(state.unsubCelConfig) state.unsubCelConfig();
+  state.unsubCelConfig = null;
 }
 
 function attachDataListeners(uid){
@@ -949,6 +1021,12 @@ function attachDataListeners(uid){
       state.data.motoristas = qs.docs.map(d => ({ id: d.id, ...d.data() }));
       render();
     }, err => showError('Erro ao carregar motoristas: '+err.message));
+  if(state.unsubCelConfig) state.unsubCelConfig();
+  state.unsubCelConfig = db.collection('users').doc(uid).collection('celularConfig').doc('settings')
+    .onSnapshot(doc => {
+      state.data.celConfig = doc.exists ? doc.data() : null;
+      render();
+    }, err => showError('Erro ao carregar configurações de celulares: '+err.message));
 }
 
 function attachUsersListener(){
@@ -1009,6 +1087,7 @@ function deleteCliente(id){ return dataCol('clientes').doc(id).delete().catch(e=
 function addMotorista(m){ return dataCol('motoristas').add(m).catch(e=>showError('Erro ao salvar: '+e.message)); }
 function updateMotorista(id, patch){ return dataCol('motoristas').doc(id).update(patch).catch(e=>showError('Erro ao atualizar: '+e.message)); }
 function deleteMotorista(id){ return dataCol('motoristas').doc(id).delete().catch(e=>showError('Erro ao excluir: '+e.message)); }
+function saveCelConfig(cfg){ return dataCol('celularConfig').doc('settings').set(cfg).then(()=>showToast('✓ Configurações salvas')).catch(e=>showError('Erro ao salvar configurações: '+e.message)); }
 function toggleOccurrence(recId, date, valor, currentlyReceived){
   const rec = state.data.recurrences.find(r=>r.id===recId);
   if(!rec) return;
@@ -1045,7 +1124,7 @@ function render(){
   document.querySelectorAll('.tab-btn').forEach(b=>{
     b.classList.toggle('active', b.dataset.tab === state.tab);
   });
-  fabBtn.style.display = (state.tab === 'usuarios') ? 'none' : 'flex';
+  fabBtn.style.display = (state.tab === 'usuarios' || state.tab === 'celulares') ? 'none' : 'flex';
   const banner = (state.currentUser && state.currentUser.role === 'admin' && state.viewingUid !== state.currentUser.uid)
     ? `<div class="viewing-banner"><span>Visualizando dados de <b>${escapeHtml(state.viewingUsername)}</b></span><button class="small-btn" id="backToMine">meus dados</button></div>`
     : '';
@@ -1054,6 +1133,7 @@ function render(){
   else if(state.tab === 'previsao') mainEl.innerHTML = banner + `<div class="tab-content">${renderPrevisao()}</div>`;
   else if(state.tab === 'frota') mainEl.innerHTML = banner + `<div class="tab-content">${renderFrota()}</div>`;
   else if(state.tab === 'emprestimos') mainEl.innerHTML = banner + `<div class="tab-content">${renderEmprestimos()}</div>`;
+  else if(state.tab === 'celulares') mainEl.innerHTML = banner + `<div class="tab-content">${renderCelulares()}</div>`;
   else mainEl.innerHTML = `<div class="tab-content">${renderUsuarios()}</div>`;
   attachMainListeners();
   renderCharts();
@@ -1844,6 +1924,129 @@ function renderEmprestimos(){
   `;
 }
 
+// ---------- Celulares (calculadora de negócio) ----------
+function renderCelulares(){
+  if(!state.celCalc){
+    state.celCalc = { modelo:'', fornecedor:'', outrosCustos:'', mercado:'', modoLucro:'margem', margemPct:'30', lucroValor:'', defeitosSelecionados:[] };
+  }
+  const cfg = celConfig();
+  const calc = state.celCalc;
+  const { custoFornecedor, custoReparo, custoTotal } = celCustoTotal(calc, cfg);
+  const { lucro, precoBase } = celPrecoBase(calc, custoTotal);
+  const mercado = parseBR(calc.mercado)||0;
+  const compMercado = mercado>0 ? ((precoBase-mercado)/mercado*100) : null;
+  const formas = celFormasPagamento(precoBase, custoTotal, cfg);
+  const pix = celParceladoPix(precoBase, custoTotal, Number(cfg.jurosPixMensal)||0, state.celParcelasPix);
+  return `
+    <div class="section-title">calculadora de negócio · celulares</div>
+    <div class="empty-note" style="padding-top:0;">Preencha o custo de compra e reparo — a calculadora sugere o preço e mostra o lucro em cada forma de pagamento. Quando fechar a venda, lance manualmente em "Lançamentos".</div>
+
+    <label class="field-label" style="margin-top:0;">Aparelho (opcional)</label>
+    <input id="celModelo" placeholder="Ex: iPhone 11 64GB" value="${escapeHtml(calc.modelo)}">
+
+    <label class="field-label">Valor pago ao fornecedor</label>
+    <input id="celFornecedor" inputmode="decimal" placeholder="R$ 0,00" value="${escapeHtml(calc.fornecedor)}">
+
+    <label class="field-label">Defeitos / reparos necessários</label>
+    <div class="cel-check-list">
+      ${(cfg.defeitos||[]).length===0
+        ? '<div class="empty-note" style="padding:4px 0;">Nenhum defeito cadastrado ainda. Toque em "⚙ taxas &amp; defeitos" para cadastrar.</div>'
+        : (cfg.defeitos||[]).map(d=>`
+        <label class="cel-check-row">
+          <span style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" data-cel-defeito="${escapeHtml(d.nome)}" ${calc.defeitosSelecionados.includes(d.nome)?'checked':''}>
+            <span class="cel-check-label">${escapeHtml(d.nome)}</span>
+          </span>
+          <span class="cel-check-cost">${fmt(Number(d.custo)||0)}</span>
+        </label>
+      `).join('')}
+    </div>
+    <label class="field-label">Outros custos de reparo (opcional)</label>
+    <input id="celOutrosCustos" inputmode="decimal" placeholder="R$ 0,00" value="${escapeHtml(calc.outrosCustos)}">
+
+    <label class="field-label">Valor de mercado de referência (opcional)</label>
+    <input id="celMercado" inputmode="decimal" placeholder="Quanto esse modelo, funcionando, vale no mercado" value="${escapeHtml(calc.mercado)}">
+
+    <label class="field-label">Como definir o lucro</label>
+    <div class="segmented">
+      <button class="seg-btn ${calc.modoLucro==='margem'?'active-gold':''}" data-cel-modo="margem" type="button">% sobre o custo</button>
+      <button class="seg-btn ${calc.modoLucro==='valor'?'active-gold':''}" data-cel-modo="valor" type="button">valor em R$</button>
+    </div>
+    ${calc.modoLucro==='margem' ? `
+      <label class="field-label">Margem de lucro desejada (%)</label>
+      <input id="celMargemPct" inputmode="decimal" placeholder="Ex: 30" value="${escapeHtml(calc.margemPct)}">
+    ` : `
+      <label class="field-label">Lucro desejado (R$)</label>
+      <input id="celLucroValor" inputmode="decimal" placeholder="Ex: 150" value="${escapeHtml(calc.lucroValor)}">
+    `}
+
+    <div class="balance-card" style="margin-top:20px;">
+      <div class="balance-eyebrow">custo total (fornecedor + reparo)</div>
+      <div class="balance-number" style="font-size:24px;">${fmt(custoTotal)}</div>
+      <div class="balance-divider"></div>
+      <div class="balance-row">
+        <div class="balance-col">
+          <div class="balance-col-label">Fornecedor</div>
+          <div class="balance-col-value">${fmt(custoFornecedor)}</div>
+        </div>
+        <div class="balance-col-divider"></div>
+        <div class="balance-col">
+          <div class="balance-col-label">Reparo</div>
+          <div class="balance-col-value">${fmt(custoReparo)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="balance-card">
+      <div class="balance-eyebrow">preço à vista sugerido</div>
+      <div class="balance-number" style="color:var(--gold);">${fmt(precoBase)}</div>
+      <div class="balance-divider"></div>
+      <div class="balance-row">
+        <div class="balance-col">
+          <div class="balance-col-label">Lucro líquido</div>
+          <div class="balance-col-value" style="color:var(--green);">${fmt(lucro)}</div>
+        </div>
+        <div class="balance-col-divider"></div>
+        <div class="balance-col">
+          <div class="balance-col-label">vs. mercado</div>
+          <div class="balance-col-value" style="${compMercado==null?'color:var(--dim);':(compMercado<=0?'color:var(--green);':'color:var(--red);')}">${compMercado==null?'—':(compMercado>0?'+':'')+compMercado.toFixed(1)+'%'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>quanto cobrar por forma de pagamento</span>
+      <button class="small-btn" id="openCelConfig" type="button">⚙ taxas &amp; defeitos</button>
+    </div>
+    ${formas.map(f=>`
+      <div class="cel-pay-row">
+        <div class="cel-pay-top">
+          <span class="cel-pay-label">${escapeHtml(f.label)}</span>
+          <span class="cel-pay-taxa">${f.taxa ? 'taxa '+fmtPct(f.taxa) : 'sem taxa'}</span>
+        </div>
+        <div class="loan-summary-row"><span class="balance-col-label">Cobrar do cliente</span><span style="font-family:var(--font-mono);font-size:15px;font-weight:600;">${fmt(f.cobrar)}</span></div>
+        <div class="loan-summary-row"><span class="balance-col-label">Lucro líquido</span><span style="font-family:var(--font-mono);font-size:14px;color:var(--green);">${fmt(f.lucro)} (${f.margem.toFixed(0)}%)</span></div>
+      </div>
+    `).join('')}
+
+    <div class="cel-pay-row">
+      <div class="cel-pay-top">
+        <span class="cel-pay-label">Parcelado via Pix</span>
+        <span class="cel-pay-taxa">juros ${fmtPct(cfg.jurosPixMensal)} a.m.</span>
+      </div>
+      <label class="field-label" style="margin-top:0;">Número de parcelas</label>
+      <select id="celParcelasPix">
+        ${Array.from({length:11},(_,i)=>i+2).map(n=>`<option value="${n}" ${state.celParcelasPix===n?'selected':''}>${n}x</option>`).join('')}
+      </select>
+      <div class="loan-summary-row" style="margin-top:10px;"><span class="balance-col-label">Valor total parcelado</span><span style="font-family:var(--font-mono);font-size:15px;font-weight:600;">${fmt(pix.totalRecebido)}</span></div>
+      <div class="loan-summary-row"><span class="balance-col-label">${state.celParcelasPix}x de</span><span style="font-family:var(--font-mono);font-size:14px;">${fmt(pix.valorParcela)}</span></div>
+      <div class="loan-summary-row"><span class="balance-col-label">Lucro líquido</span><span style="font-family:var(--font-mono);font-size:14px;color:var(--green);">${fmt(pix.lucro)} (${pix.margem.toFixed(0)}%)</span></div>
+    </div>
+
+    <div class="empty-note">Os valores acima são só para simulação — nada aqui é salvo como lançamento. Ao fechar a venda, registre manualmente em "Lançamentos".</div>
+  `;
+}
+
 // ---------- Usuários (admin) ----------
 function renderUsuarios(){
   const users = state.allUsers.slice().sort((a,b)=> (a.username||'').localeCompare(b.username||''));
@@ -1890,6 +2093,17 @@ function bindSearchInput(id, stateKey){
     render();
     const el2 = document.getElementById(id);
     if(el2){ el2.focus(); el2.setSelectionRange(pos, pos); }
+  };
+}
+function bindCelInput(id, key){
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.oninput = () => {
+    const pos = el.selectionStart;
+    state.celCalc[key] = el.value;
+    render();
+    const el2 = document.getElementById(id);
+    if(el2){ el2.focus(); if(pos!=null) el2.setSelectionRange(pos, pos); }
   };
 }
 function attachMainListeners(){
@@ -2024,6 +2238,30 @@ function attachMainListeners(){
   document.querySelectorAll('[data-delete-user]').forEach(btn=>{
     btn.onclick = () => removeUserAccount(btn.getAttribute('data-delete-user'), btn.getAttribute('data-delete-username'));
   });
+
+  // celulares (calculadora de negócio)
+  bindCelInput('celModelo', 'modelo');
+  bindCelInput('celFornecedor', 'fornecedor');
+  bindCelInput('celOutrosCustos', 'outrosCustos');
+  bindCelInput('celMercado', 'mercado');
+  bindCelInput('celMargemPct', 'margemPct');
+  bindCelInput('celLucroValor', 'lucroValor');
+  document.querySelectorAll('[data-cel-defeito]').forEach(el=>{
+    el.onchange = () => {
+      const nome = el.getAttribute('data-cel-defeito');
+      const idx = state.celCalc.defeitosSelecionados.indexOf(nome);
+      if(el.checked && idx===-1) state.celCalc.defeitosSelecionados.push(nome);
+      if(!el.checked && idx!==-1) state.celCalc.defeitosSelecionados.splice(idx,1);
+      render();
+    };
+  });
+  document.querySelectorAll('[data-cel-modo]').forEach(btn=>{
+    btn.onclick = () => { state.celCalc.modoLucro = btn.getAttribute('data-cel-modo'); render(); };
+  });
+  const celParcelasSel = document.getElementById('celParcelasPix');
+  if(celParcelasSel) celParcelasSel.onchange = () => { state.celParcelasPix = parseInt(celParcelasSel.value, 10); render(); };
+  const openCelConfigBtn = document.getElementById('openCelConfig');
+  if(openCelConfigBtn) openCelConfigBtn.onclick = openCelConfigForm;
 }
 
 function shiftMonth(delta){
@@ -2052,7 +2290,7 @@ fabBtn.addEventListener('click', ()=>{
   if(state.tab === 'emprestimos') openLoanForm();
   else if(state.tab === 'previsao') openRecurrenceForm();
   else if(state.tab === 'frota') openVehicleForm();
-  else if(state.tab !== 'usuarios') openTxForm();
+  else if(state.tab !== 'usuarios' && state.tab !== 'celulares') openTxForm();
 });
 
 // ---------- Tx form ----------
@@ -2361,6 +2599,86 @@ function openContactForm(kind, existing){
     overlay.remove();
   };
 }
+
+// ---------- Celulares: configuração de taxas e catálogo de defeitos ----------
+function openCelConfigForm(){
+  const cfg = celConfig();
+  let feeRows = (cfg.feeTable||[]).map(r=>({ label: r.label, taxa: r.taxa }));
+  let defRows = (cfg.defeitos||[]).map(r=>({ nome: r.nome, custo: r.custo }));
+  let juros = (cfg.jurosPixMensal!=null) ? cfg.jurosPixMensal : 5;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'sheet-overlay';
+  document.body.appendChild(overlay);
+
+  function paint(){
+    overlay.innerHTML = `
+      <div class="sheet" role="dialog">
+        <div class="sheet-handle"></div>
+        <div class="sheet-header">
+          <div class="sheet-title">Taxas &amp; defeitos</div>
+          <button class="icon-btn" id="closeCelConfig">✕</button>
+        </div>
+        <div class="section-title" style="margin-top:0;">taxas de máquina (cartão)</div>
+        ${feeRows.map((r,i)=>`
+          <div class="cel-config-row">
+            <input data-fee-label="${i}" placeholder="Ex: Crédito 3x" value="${escapeHtml(r.label)}">
+            <input class="cel-config-num" data-fee-taxa="${i}" inputmode="decimal" placeholder="taxa %" value="${r.taxa!=null?r.taxa:''}">
+            <button class="cel-remove-row" data-fee-remove="${i}" type="button">✕</button>
+          </div>
+        `).join('')}
+        <button class="small-btn" id="addFeeRow" type="button" style="margin-bottom:16px;">+ forma de pagamento</button>
+
+        <div class="section-title">juros — parcelado via pix</div>
+        <label class="field-label" style="margin-top:0;">Juros simples ao mês (%)</label>
+        <input id="celJurosPix" inputmode="decimal" value="${juros!=null?juros:''}">
+
+        <div class="section-title">catálogo de defeitos / reparos</div>
+        ${defRows.map((r,i)=>`
+          <div class="cel-config-row">
+            <input data-def-nome="${i}" placeholder="Ex: Tela trincada" value="${escapeHtml(r.nome)}">
+            <input class="cel-config-num" data-def-custo="${i}" inputmode="decimal" placeholder="custo R$" value="${r.custo!=null?r.custo:''}">
+            <button class="cel-remove-row" data-def-remove="${i}" type="button">✕</button>
+          </div>
+        `).join('')}
+        <button class="small-btn" id="addDefRow" type="button" style="margin-bottom:16px;">+ defeito</button>
+
+        <button class="save-btn" id="saveCelConfig">Salvar configurações</button>
+      </div>
+    `;
+    overlay.querySelector('#closeCelConfig').onclick = () => overlay.remove();
+    overlay.querySelectorAll('[data-fee-label]').forEach(el=>{
+      el.oninput = () => { feeRows[+el.getAttribute('data-fee-label')].label = el.value; };
+    });
+    overlay.querySelectorAll('[data-fee-taxa]').forEach(el=>{
+      el.oninput = () => { feeRows[+el.getAttribute('data-fee-taxa')].taxa = el.value; };
+    });
+    overlay.querySelectorAll('[data-fee-remove]').forEach(el=>{
+      el.onclick = () => { feeRows.splice(+el.getAttribute('data-fee-remove'), 1); paint(); };
+    });
+    overlay.querySelector('#addFeeRow').onclick = () => { feeRows.push({ label:'', taxa:0 }); paint(); };
+    overlay.querySelectorAll('[data-def-nome]').forEach(el=>{
+      el.oninput = () => { defRows[+el.getAttribute('data-def-nome')].nome = el.value; };
+    });
+    overlay.querySelectorAll('[data-def-custo]').forEach(el=>{
+      el.oninput = () => { defRows[+el.getAttribute('data-def-custo')].custo = el.value; };
+    });
+    overlay.querySelectorAll('[data-def-remove]').forEach(el=>{
+      el.onclick = () => { defRows.splice(+el.getAttribute('data-def-remove'), 1); paint(); };
+    });
+    overlay.querySelector('#addDefRow').onclick = () => { defRows.push({ nome:'', custo:0 }); paint(); };
+    overlay.querySelector('#celJurosPix').oninput = (e) => { juros = e.target.value; };
+    overlay.querySelector('#saveCelConfig').onclick = () => {
+      const cleanFees = feeRows.filter(r=>r.label && String(r.label).trim()).map(r=>({ label: String(r.label).trim(), taxa: parseBR(r.taxa)||0 }));
+      const cleanDefs = defRows.filter(r=>r.nome && String(r.nome).trim()).map(r=>({ nome: String(r.nome).trim(), custo: parseBR(r.custo)||0 }));
+      saveCelConfig({ feeTable: cleanFees, defeitos: cleanDefs, jurosPixMensal: parseBR(juros)||0 });
+      overlay.remove();
+    };
+  }
+  paint();
+  overlay.onclick = (e) => { if(e.target === overlay) overlay.remove(); };
+}
+
 function openVehicleForm(){
   const overlay = document.createElement('div');
   overlay.className = 'sheet-overlay';
