@@ -234,9 +234,9 @@
     <button class="tab-btn" data-tab="resumo"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M21 3a9 9 0 0 0-9 9h9z" fill="currentColor" stroke="none" opacity=".25"/></svg></span><span class="tab-label">Resumo</span></button>
     <button class="tab-btn" data-tab="lancamentos"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span><span class="tab-label">Lançamentos</span></button>
     <button class="tab-btn" data-tab="previsao"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></span><span class="tab-label">Previsão</span></button>
-    <button class="tab-btn" data-tab="frota"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l1.6-4.3A2 2 0 0 1 8.5 5.4h7a2 2 0 0 1 1.9 1.3L19 11"/><rect x="2.5" y="11" width="19" height="6" rx="2"/><circle cx="7" cy="17.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="17" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg></span><span class="tab-label">Frota</span></button>
+    <button class="tab-btn" data-tab="frota" id="tabFrota"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11l1.6-4.3A2 2 0 0 1 8.5 5.4h7a2 2 0 0 1 1.9 1.3L19 11"/><rect x="2.5" y="11" width="19" height="6" rx="2"/><circle cx="7" cy="17.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="17" cy="17.5" r="1.6" fill="currentColor" stroke="none"/></svg></span><span class="tab-label">Frota</span></button>
     <button class="tab-btn" data-tab="emprestimos" id="tabEmprestimos"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span><span class="tab-label">Empréstimos</span></button>
-    <button class="tab-btn" data-tab="celulares"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></span><span class="tab-label">Celulares</span></button>
+    <button class="tab-btn" data-tab="celulares" id="tabCelulares"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></span><span class="tab-label">Celulares</span></button>
     <button class="tab-btn" data-tab="usuarios" id="tabUsuarios" style="display:none;"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="tab-label">Usuários</span></button>
   </nav>
 </div>
@@ -859,7 +859,7 @@ const state = {
   tab: 'resumo',
   refMonth: new Date(),
   previsaoRefMonth: new Date(),
-  currentUser: null,   // { uid, username, role, canLoans }
+  currentUser: null,   // { uid, username, role, canLoans, canFrota, canCelulares }
   viewingUid: null,    // qual usuário está sendo exibido (== currentUser.uid, exceto quando admin espia outro)
   viewingUsername: null,
   allUsers: [],         // só preenchido para admin
@@ -954,12 +954,18 @@ auth.onAuthStateChanged(async (user) => {
     }
     const isAdmin = (profile.role || 'user') === 'admin';
     const canLoans = isAdmin ? true : profile.canLoans === true;
-    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user', canLoans, tenantId: profile.tenantId || user.uid };
+    const canFrota = isAdmin ? true : profile.canFrota === true;
+    const canCelulares = isAdmin ? true : profile.canCelulares === true;
+    state.currentUser = { uid: user.uid, username: profile.username, role: profile.role || 'user', canLoans, canFrota, canCelulares, tenantId: profile.tenantId || user.uid };
     state.viewingUid = user.uid;
     state.viewingUsername = profile.username;
     document.getElementById('tabUsuarios').style.display = isAdmin ? '' : 'none';
     document.getElementById('tabEmprestimos').style.display = canLoans ? '' : 'none';
+    document.getElementById('tabFrota').style.display = canFrota ? '' : 'none';
+    document.getElementById('tabCelulares').style.display = canCelulares ? '' : 'none';
     if(!canLoans && state.tab === 'emprestimos') state.tab = 'resumo';
+    if(!canFrota && state.tab === 'frota') state.tab = 'resumo';
+    if(!canCelulares && state.tab === 'celulares') state.tab = 'resumo';
     showApp(true);
     attachDataListeners(state.viewingUid);
     if(isAdmin) attachUsersListener();
@@ -2072,6 +2078,14 @@ function renderUsuarios(){
             <span class="user-perm-label">Acesso a Empréstimos</span>
             <div class="toggle ${u.canLoans===true ? 'on':''}" data-toggle-loans="${u.uid}" data-current="${u.canLoans===true}"><div class="toggle-dot"></div></div>
           </div>
+          <div class="user-perm-row">
+            <span class="user-perm-label">Acesso a Frota</span>
+            <div class="toggle ${u.canFrota===true ? 'on':''}" data-toggle-frota="${u.uid}" data-current="${u.canFrota===true}"><div class="toggle-dot"></div></div>
+          </div>
+          <div class="user-perm-row">
+            <span class="user-perm-label">Acesso a Celulares</span>
+            <div class="toggle ${u.canCelulares===true ? 'on':''}" data-toggle-celulares="${u.uid}" data-current="${u.canCelulares===true}"><div class="toggle-dot"></div></div>
+          </div>
         </div>`}
         ${u.uid !== state.currentUser.uid ? `
         <div style="margin-top:10px;padding-top:10px;border-top:1px solid #211C14;display:flex;justify-content:flex-end;">
@@ -2230,6 +2244,22 @@ function attachMainListeners(){
       const uid = el.getAttribute('data-toggle-loans');
       const current = el.getAttribute('data-current') === 'true';
       db.collection('users').doc(uid).update({ canLoans: !current })
+        .catch(e=>showError('Erro ao atualizar permissão: '+e.message));
+    };
+  });
+  document.querySelectorAll('[data-toggle-frota]').forEach(el=>{
+    el.onclick = () => {
+      const uid = el.getAttribute('data-toggle-frota');
+      const current = el.getAttribute('data-current') === 'true';
+      db.collection('users').doc(uid).update({ canFrota: !current })
+        .catch(e=>showError('Erro ao atualizar permissão: '+e.message));
+    };
+  });
+  document.querySelectorAll('[data-toggle-celulares]').forEach(el=>{
+    el.onclick = () => {
+      const uid = el.getAttribute('data-toggle-celulares');
+      const current = el.getAttribute('data-current') === 'true';
+      db.collection('users').doc(uid).update({ canCelulares: !current })
         .catch(e=>showError('Erro ao atualizar permissão: '+e.message));
     };
   });
@@ -3074,7 +3104,7 @@ function openAddUserForm(){
       secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
       const cred = await secondaryApp.auth().createUserWithEmailAndPassword(usernameToEmail(username), password);
       await db.collection('users').doc(cred.user.uid).set({
-        username, role, active: true, canLoans: false, tenantId: state.currentUser.tenantId, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        username, role, active: true, canLoans: false, canFrota: false, canCelulares: false, tenantId: state.currentUser.tenantId, createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
       await secondaryApp.auth().signOut();
       overlay.remove();
