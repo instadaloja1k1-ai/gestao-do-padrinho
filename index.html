@@ -548,8 +548,9 @@ function vendaProfit(r){
   const margemPct = totalVenda>0 ? (lucro/totalVenda)*100 : 0;
   return { totalVenda, custo, lucro, margemPct };
 }
-// gera as ocorrências de uma recorrência dentro de uma janela explícita [rangeStart, rangeEnd]
-function nextOccurrences(rec, rangeStart, rangeEnd){
+// gera as ocorrências de uma recorrência dentro de uma janela explícita [rangeStart, rangeEnd].
+// isCurrentMonth (opcional) só importa pra 'parcelas': veja o comentário lá dentro.
+function nextOccurrences(rec, rangeStart, rangeEnd, isCurrentMonth){
   if(rec.ativo === false) return [];
   const inicio = midnight(new Date(rec.dataInicio+'T00:00:00'));
   const out = [];
@@ -577,21 +578,30 @@ function nextOccurrences(rec, rangeStart, rangeEnd){
   }else if(rec.frequencia === 'parcelas'){
     const total = rec.parcelasTotal||0;
     const recebidas = rec.receivedDates||[];
+    const hoje = midnight(new Date());
     for(let i=0;i<total;i++){
       const d = addMonths(inicio, i);
       const dateStr = toISO(d);
       if(!recebidas.includes(dateStr)){
-        if(d <= rangeEnd) out.push({ date: dateStr, parcelaNum: i+1 }); // só entra se já venceu ou vence até o fim da janela vista
-        break; // só a parcela atual pendente — nunca acumula parcelas atrasadas
+        // só a parcela atual pendente — nunca acumula parcelas atrasadas.
+        // No mês atual ela aparece mesmo se já estiver vencida há muito tempo (pra não sumir
+        // da previsão). Em mês futuro, só conta se a data DELA cair dentro daquele mês — senão
+        // uma parcela atrasada desde julho aparecia como "a receber" em todo mês futuro que você
+        // fosse olhar, só porque a data dela era <= o fim daquele mês (sem checar o início).
+        const overdue = d < hoje;
+        if((isCurrentMonth && overdue) || (d >= rangeStart && d <= rangeEnd)){
+          out.push({ date: dateStr, parcelaNum: i+1 });
+        }
+        break;
       }
     }
   }
   return out;
 }
-function buildForecast(recurrences, rangeStart, rangeEnd){
+function buildForecast(recurrences, rangeStart, rangeEnd, isCurrentMonth){
   const items = [];
   recurrences.map(normalizeRecurrence).forEach(rec => {
-    nextOccurrences(rec, rangeStart, rangeEnd).forEach(occ => {
+    nextOccurrences(rec, rangeStart, rangeEnd, isCurrentMonth).forEach(occ => {
       items.push({
         date: occ.date,
         tipo: rec.tipo,
@@ -674,8 +684,20 @@ function buildLoanForecastItems(rangeStart, rangeEnd, isCurrentMonth){
       for(let i=pagas; i<(l.numParcelas||0); i++){
         const d = midnight(addMonths(new Date(l.primeiraParcelaData+'T00:00:00'), i));
         const overdue = d < hoje;
-        if((isCurrentMonth && overdue) || (d >= rangeStart && d <= rangeEnd)){
-          items.push({ date: toISO(d), valor: valorParcela, borrower: l.borrower, label: `parcela ${i+1}/${l.numParcelas}`, loanId: l.id });
+        if(isCurrentMonth){
+          // mês atual: mostra toda a bagagem de parcelas já vencidas e não pagas (pode ser
+          // mais de uma se você ficou atrasado por vários meses), mais a que cai no próprio mês.
+          if(overdue || (d >= rangeStart && d <= rangeEnd)){
+            items.push({ date: toISO(d), valor: valorParcela, borrower: l.borrower, label: `parcela ${i+1}/${l.numParcelas}`, loanId: l.id });
+          }
+        }else{
+          // mês futuro: só faz sentido projetar a PRÓXIMA parcela pendente (i === pagas) — as
+          // seguintes só vencem depois que essa for recebida, então não adianta "prever" a
+          // parcela 8 caindo em dezembro enquanto a 3 ainda está atrasada desde julho.
+          if(i === pagas && d >= rangeStart && d <= rangeEnd){
+            items.push({ date: toISO(d), valor: valorParcela, borrower: l.borrower, label: `parcela ${i+1}/${l.numParcelas}`, loanId: l.id });
+          }
+          break;
         }
       }
     }else if(l.dueDate){
@@ -835,8 +857,8 @@ function renderResumoCharts(){
 }
 function renderPrevisaoCharts(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
-  const { rangeStart, rangeEnd, monthStart, hoje } = previsaoRange(state.previsaoRefMonth);
-  const forecast = buildForecast(recs, rangeStart, rangeEnd);
+  const { rangeStart, rangeEnd, monthStart, hoje, isCurrentMonth } = previsaoRange(state.previsaoRefMonth);
+  const forecast = buildForecast(recs, rangeStart, rangeEnd, isCurrentMonth);
   const pendentes = forecast.filter(i=>!i.received && i.direcao!=='saida');
   const byTipo = {};
   pendentes.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
@@ -1474,7 +1496,7 @@ function daysLeftInMonth(){
 function renderPrevisao(){
   const recs = state.data.recurrences.map(normalizeRecurrence);
   const { rangeStart, rangeEnd, hoje, isCurrentMonth } = previsaoRange(state.previsaoRefMonth);
-  const forecast = buildForecast(recs, rangeStart, rangeEnd);
+  const forecast = buildForecast(recs, rangeStart, rangeEnd, isCurrentMonth);
 
   const pendentes = forecast.filter(i=>!i.received);
   const entradaPend = pendentes.filter(i=>i.direcao!=='saida');
