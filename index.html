@@ -1514,7 +1514,12 @@ function renderPrevisao(){
   const totalEntradaAtrasada = entradaAtrasada.reduce((s,i)=>s+i.valor,0);
   const totalSaidaFutura = saidaFutura.reduce((s,i)=>s+i.valor,0);
   const totalSaidaAtrasada = saidaAtrasada.reduce((s,i)=>s+i.valor,0);
-  const saldoPrevisto = totalEntradaFutura - totalSaidaFutura;
+  // total do mês = tudo que ainda não foi recebido/pago, vencido ou não — assim o mês
+  // atual (o único que pode ter atrasado) não fica com um total artificialmente menor
+  // que os meses futuros só por causa do que já venceu e ainda não foi baixado.
+  const totalEntradaPendente = totalEntradaFutura + totalEntradaAtrasada;
+  const totalSaidaPendente = totalSaidaFutura + totalSaidaAtrasada;
+  const saldoPrevisto = totalEntradaPendente - totalSaidaPendente;
 
   const byTipo = {};
   entradaPend.forEach(i=>{ byTipo[i.tipo] = (byTipo[i.tipo]||0) + i.valor; });
@@ -1537,15 +1542,15 @@ function renderPrevisao(){
       <div class="balance-row">
         <div class="balance-col">
           <span class="balance-col-label">↑ Entradas pendentes</span>
-          <span class="balance-col-value" style="color:#7FBFA6">${fmt(totalEntradaFutura)}</span>
+          <span class="balance-col-value" style="color:#7FBFA6">${fmt(totalEntradaPendente)}</span>
         </div>
         <div class="balance-col-divider"></div>
         <div class="balance-col">
           <span class="balance-col-label">↓ Saídas pendentes</span>
-          <span class="balance-col-value" style="color:#D98A8E">${fmt(totalSaidaFutura)}</span>
+          <span class="balance-col-value" style="color:#D98A8E">${fmt(totalSaidaPendente)}</span>
         </div>
       </div>
-      ${(totalEntradaAtrasada>0 || totalSaidaAtrasada>0) ? `<div class="empty-note" style="color:var(--red);padding-top:14px;">⚠ ${totalEntradaAtrasada>0?`${fmt(totalEntradaAtrasada)} a receber atrasado`:''}${(totalEntradaAtrasada>0&&totalSaidaAtrasada>0)?' · ':''}${totalSaidaAtrasada>0?`${fmt(totalSaidaAtrasada)} a pagar atrasado`:''}</div>` : ''}
+      ${(totalEntradaAtrasada>0 || totalSaidaAtrasada>0) ? `<div class="empty-note" style="color:var(--red);padding-top:14px;">⚠ ${totalEntradaAtrasada>0?`sendo ${fmt(totalEntradaAtrasada)} já vencido e não recebido`:''}${(totalEntradaAtrasada>0&&totalSaidaAtrasada>0)?' · ':''}${totalSaidaAtrasada>0?`sendo ${fmt(totalSaidaAtrasada)} já vencido e não pago`:''}</div>` : ''}
     </div>
 
     ${(() => {
