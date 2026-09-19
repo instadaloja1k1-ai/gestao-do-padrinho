@@ -718,6 +718,81 @@ function buildLoanForecastItems(rangeStart, rangeEnd, isCurrentMonth){
   items.sort((a,b)=> a.date < b.date ? -1 : 1);
   return items;
 }
+// ---------- widget "cai hoje" (topo do Resumo) ----------
+// junta recorrências (frota, pix, salário, negócios...) + vencimentos de empréstimos
+// cuja data cai exatamente hoje. Empréstimo sem data de vencimento definida (que o
+// buildLoanForecastItems empurra pra "hoje" só como placeholder) fica de fora daqui,
+// senão apareceria pra sempre no widget todo santo dia.
+function buildHojeItems(){
+  const hoje = midnight(new Date());
+  const hojeISO = toISO(hoje);
+  const recs = state.data.recurrences.map(normalizeRecurrence);
+  const forecastHoje = buildForecast(recs, hoje, hoje, true)
+    .filter(i => i.date === hojeISO && !i.received);
+  const loanHoje = buildLoanForecastItems(hoje, hoje, true)
+    .filter(i => i.date === hojeISO && i.label !== 'sem vencimento definido');
+
+  const itens = [
+    ...forecastHoje.map(i => {
+      const info = tipoInfo(i);
+      return {
+        isSaida: i.direcao === 'saida',
+        valor: i.valor,
+        color: info.color,
+        desc: i.descricao || info.label,
+        meta: info.label + (i.parcelaNum ? ` · parcela ${i.parcelaNum}/${i.parcelasTotal}` : ''),
+      };
+    }),
+    ...loanHoje.map(i => ({
+      isSaida: false,
+      valor: i.valor,
+      color: 'var(--gold)',
+      desc: i.borrower,
+      meta: `Empréstimo · ${i.label}`,
+    })),
+  ];
+  itens.sort((a,b)=> b.valor - a.valor);
+
+  const totalEntrada = itens.filter(i=>!i.isSaida).reduce((s,i)=>s+i.valor,0);
+  const totalSaida = itens.filter(i=>i.isSaida).reduce((s,i)=>s+i.valor,0);
+  return { itens, totalEntrada, totalSaida };
+}
+function renderHojeWidget(){
+  const { itens, totalEntrada, totalSaida } = buildHojeItems();
+  const hojeLabel = midnight(new Date()).toLocaleDateString('pt-BR', { weekday:'long', day:'2-digit', month:'long' });
+  return `
+    <div class="balance-card">
+      <div class="balance-eyebrow">cai hoje · ${hojeLabel}</div>
+      <div class="balance-number" style="color:${totalEntrada>0?'var(--green)':'var(--text)'}">${fmt(totalEntrada)}</div>
+      ${totalSaida>0 ? `
+      <div class="balance-divider"></div>
+      <div class="balance-row">
+        <div class="balance-col">
+          <span class="balance-col-label">↑ Entra hoje</span>
+          <span class="balance-col-value" style="color:var(--green)">${fmt(totalEntrada)}</span>
+        </div>
+        <div class="balance-col-divider"></div>
+        <div class="balance-col">
+          <span class="balance-col-label">↓ Sai hoje</span>
+          <span class="balance-col-value" style="color:var(--red)">${fmt(totalSaida)}</span>
+        </div>
+      </div>` : ''}
+    </div>
+    ${itens.length===0 ? '<div class="empty-note">Nada previsto para cair hoje.</div>' : `
+    <div class="tx-list" style="margin-bottom:26px;">
+      ${itens.map(i=>`
+        <div class="tx-row">
+          <div class="tx-dot" style="background:${i.color}"></div>
+          <div class="tx-info">
+            <div class="tx-desc">${escapeHtml(i.desc)}</div>
+            <div class="tx-meta">${escapeHtml(i.meta)}</div>
+          </div>
+          <div class="tx-amount" style="color:${i.isSaida?'var(--red)':'var(--green)'}">${i.isSaida?'-':'+'} ${fmt(i.valor)}</div>
+        </div>
+      `).join('')}
+    </div>`}
+  `;
+}
 // calcula a janela de datas a olhar para um mês de referência da Previsão
 function previsaoRange(refDate){
   const hoje = midnight(new Date());
@@ -1374,6 +1449,7 @@ function renderResumo(){
   const maiorCat = catEntries[0];
 
   return `
+    ${renderHojeWidget()}
     <div class="month-nav">
       <button class="icon-btn" id="prevMonth">‹</button>
       <div class="month-label">${monthLabel(refMonth)}</div>
