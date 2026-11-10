@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gestao-do-padrinho-v2';
+const CACHE_NAME = 'gestao-do-padrinho-v3';
 const APP_SHELL = ['./index.html', './manifest_2.json', './icon-192.png'];
 
 self.addEventListener('install', (event) => {

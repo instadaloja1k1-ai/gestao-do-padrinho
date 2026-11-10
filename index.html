@@ -196,6 +196,29 @@
   .status-pill.disponivel{background:#1B2A3A;color:#8FB4D9;border:1px solid #2C4459;}
   .status-pill.manutencao{background:#3A2323;color:var(--red);border:1px solid #5A3333;}
 
+  /* ---- última parcela + projeção semanal (Resumo) ---- */
+  .ultima-card{background:#2A2417;border:1px solid var(--gold);border-radius:14px;padding:14px 16px;margin-bottom:18px;
+    box-shadow:0 0 18px rgba(245,184,0,.12);}
+  .ultima-title{font-size:12px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;}
+  .ultima-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(245,184,0,.15);}
+  .ultima-row:last-child{border-bottom:none;padding-bottom:0;}
+  .rel-headline{margin-bottom:12px;}
+  .rel-frase{font-size:14px;line-height:1.5;}
+  .rel-frase b{font-family:var(--font-mono);font-weight:600;}
+  .rel-atraso{font-size:11.5px;color:var(--red);margin-top:8px;padding-top:8px;border-top:1px solid var(--border);}
+  .rel-weeks{display:flex;flex-direction:column;gap:8px;margin-bottom:26px;}
+  .rel-week{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;}
+  .rel-week summary{list-style:none;cursor:pointer;}
+  .rel-week summary::-webkit-details-marker{display:none;}
+  .rel-week[open] summary{margin-bottom:6px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .rel-week-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;}
+  .rel-week-label{font-weight:600;font-size:14px;}
+  .rel-week-sub{font-weight:400;font-size:11px;color:var(--dim);margin-left:4px;}
+  .rel-week-saldo{font-family:var(--font-mono);font-size:15px;font-weight:600;}
+  .rel-week-nums{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-top:4px;}
+  .rel-week-nums b{font-family:var(--font-mono);font-weight:600;}
+  .rel-week-delta{font-size:11px;color:var(--dim);margin-top:3px;}
+
   /* ---- celulares tab ---- */
   .cel-check-list{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px;}
   .cel-check-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface2);
@@ -793,6 +816,175 @@ function renderHojeWidget(){
     </div>`}
   `;
 }
+// ---------- relatório semanal acumulado (tela inicial) ----------
+// Junta tudo que ainda está pendente (recorrências de entrada/saída + parcelas/vencimentos de
+// empréstimos) numa janela [rangeStart, rangeEnd]. Usa isCurrentMonth=true no nextOccurrences
+// pra que parcelas de vários meses diferentes dentro da janela apareçam todas (com false ele
+// devolve só a primeira e para). Empréstimo sem vencimento definido fica de fora (não tem data).
+function buildPendingItems(rangeStart, rangeEnd){
+  const items = [];
+  state.data.recurrences.map(normalizeRecurrence).forEach(rec=>{
+    nextOccurrences(rec, rangeStart, rangeEnd, true).forEach(occ=>{
+      if((rec.receivedDates||[]).includes(occ.date)) return;
+      const d = midnight(new Date(occ.date+'T00:00:00'));
+      if(d < rangeStart || d > rangeEnd) return;
+      const info = tipoInfo(rec);
+      items.push({
+        date: occ.date,
+        valor: rec.valor,
+        isSaida: rec.direcao === 'saida',
+        color: info.color,
+        desc: rec.descricao || info.label,
+        meta: info.label + (occ.parcelaNum ? ` · parcela ${occ.parcelaNum}/${rec.parcelasTotal}` : ''),
+      });
+    });
+  });
+  buildLoanForecastItems(rangeStart, rangeEnd, true)
+    .filter(i => i.label !== 'sem vencimento definido')
+    .forEach(i=>{
+      const d = midnight(new Date(i.date+'T00:00:00'));
+      if(d < rangeStart || d > rangeEnd) return;
+      items.push({ date: i.date, valor: i.valor, isSaida: false, color: 'var(--gold)', desc: i.borrower, meta: `Empréstimo · ${i.label}` });
+    });
+  items.sort((a,b)=> a.date < b.date ? -1 : (a.date > b.date ? 1 : b.valor - a.valor));
+  return items;
+}
+// semanas a partir de hoje (hoje → hoje+6, hoje+7 → hoje+13...), com totais da semana e
+// acumulado desde hoje: "até dd/mm você terá recebido X e pago Y".
+function buildWeeklyReport(numWeeks){
+  const hoje = midnight(new Date());
+  const fim = addDays(hoje, numWeeks*7 - 1);
+  const items = buildPendingItems(hoje, fim);
+  const atrasados = buildPendingItems(addDays(hoje, -LOOKBACK_DAYS), addDays(hoje, -1));
+  const weeks = [];
+  let accIn = 0, accOut = 0;
+  for(let w=0; w<numWeeks; w++){
+    const start = addDays(hoje, w*7);
+    const end = addDays(start, 6);
+    const sISO = toISO(start), eISO = toISO(end);
+    const doPeriodo = items.filter(i => i.date >= sISO && i.date <= eISO);
+    const entra = doPeriodo.filter(i=>!i.isSaida).reduce((s,i)=>s+i.valor,0);
+    const sai = doPeriodo.filter(i=>i.isSaida).reduce((s,i)=>s+i.valor,0);
+    accIn += entra; accOut += sai;
+    weeks.push({ start, end, entra, sai, accIn, accOut, itens: doPeriodo });
+  }
+  return {
+    weeks,
+    atrasadoEntrada: atrasados.filter(i=>!i.isSaida).reduce((s,i)=>s+i.valor,0),
+    atrasadoSaida: atrasados.filter(i=>i.isSaida).reduce((s,i)=>s+i.valor,0),
+  };
+}
+function renderWeeklyReport(){
+  const n = state.relSemanas || 8;
+  const { weeks, atrasadoEntrada, atrasadoSaida } = buildWeeklyReport(n);
+  const dm = d => d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+  const wd = d => d.toLocaleDateString('pt-BR', { weekday:'short' }).replace('.','');
+  const first = weeks[0];
+  const last = weeks[weeks.length-1];
+  const sobraFinal = last.accIn - last.accOut;
+  return `
+    <div class="section-title">projeção semanal · a receber e a pagar</div>
+    <div class="segmented" style="margin-bottom:12px;">
+      ${[4,8,12].map(k=>`<button type="button" class="seg-btn ${n===k?'active-gold':''}" data-rel-semanas="${k}">${k} semanas</button>`).join('')}
+    </div>
+    <div class="loan-summary-card rel-headline">
+      <div class="rel-frase">Até <b>${dm(first.end)}</b> (${wd(first.end)}) você terá recebido <b style="color:var(--green)">${fmt(first.accIn)}</b> e pago <b style="color:var(--red)">${fmt(first.accOut)}</b> de contas.</div>
+      <div class="rel-frase" style="margin-top:6px;">Até <b>${dm(last.end)}</b>: recebido <b style="color:var(--green)">${fmt(last.accIn)}</b> · pago <b style="color:var(--red)">${fmt(last.accOut)}</b> · sobra <b style="color:${sobraFinal>=0?'var(--green)':'var(--red)'}">${fmt(sobraFinal)}</b></div>
+      ${(atrasadoEntrada>0 || atrasadoSaida>0) ? `<div class="rel-atraso">Fora da conta: ${atrasadoEntrada>0?`${fmt(atrasadoEntrada)} atrasado pra receber`:''}${atrasadoEntrada>0&&atrasadoSaida>0?' · ':''}${atrasadoSaida>0?`${fmt(atrasadoSaida)} de contas atrasadas`:''}</div>` : ''}
+    </div>
+    <div class="rel-weeks">
+      ${weeks.map((w,idx)=>{
+        const saldo = w.accIn - w.accOut;
+        return `
+        <details class="rel-week">
+          <summary>
+            <div class="rel-week-top">
+              <span class="rel-week-label">Até ${dm(w.end)} <span class="rel-week-sub">${idx===0?'esta semana':`semana ${dm(w.start)}–${dm(w.end)}`}</span></span>
+              <span class="rel-week-saldo" style="color:${saldo>=0?'var(--green)':'var(--red)'}">${fmt(saldo)}</span>
+            </div>
+            <div class="rel-week-nums">
+              <span>Recebido <b style="color:var(--green)">${fmt(w.accIn)}</b></span>
+              <span>Pago <b style="color:var(--red)">${fmt(w.accOut)}</b></span>
+            </div>
+            <div class="rel-week-delta">na semana: +${fmt(w.entra)} / −${fmt(w.sai)} · ${w.itens.length} ${w.itens.length===1?'item':'itens'}</div>
+          </summary>
+          ${w.itens.length===0 ? '<div class="empty-note" style="padding:8px 0 4px;">Nada previsto nesta semana.</div>' : `
+          <div class="tx-list">
+            ${w.itens.map(i=>`
+              <div class="tx-row">
+                <div class="tx-dot" style="background:${i.color}"></div>
+                <div class="tx-info">
+                  <div class="tx-desc">${escapeHtml(i.desc)}</div>
+                  <div class="tx-meta">${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'2-digit'})} · ${escapeHtml(i.meta)}</div>
+                </div>
+                <div class="tx-amount" style="color:${i.isSaida?'var(--red)':'var(--green)'}">${i.isSaida?'-':'+'} ${fmt(i.valor)}</div>
+              </div>`).join('')}
+          </div>`}
+        </details>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+// ---------- aviso de última parcela (vendas parceladas + empréstimos parcelados) ----------
+// Venda parcelada = recorrência com frequência 'parcelas' de entrada. Quando sobra só UMA
+// parcela em aberto, ela entra aqui. Empréstimo parcelado idem (numParcelas - pagas === 1).
+function buildUltimasParcelas(){
+  const hoje = midnight(new Date());
+  const out = [];
+  state.data.recurrences.map(normalizeRecurrence)
+    .filter(r => r.frequencia === 'parcelas' && r.direcao !== 'saida' && r.ativo !== false && (r.parcelasTotal||0) > 0)
+    .forEach(r=>{
+      const inicio = midnight(new Date(r.dataInicio+'T00:00:00'));
+      const recebidas = r.receivedDates||[];
+      const abertas = [];
+      for(let i=0;i<r.parcelasTotal;i++){
+        const iso = toISO(addMonths(inicio, i));
+        if(!recebidas.includes(iso)) abertas.push({ iso, num: i+1 });
+      }
+      if(abertas.length !== 1) return;
+      const info = tipoInfo(r);
+      out.push({
+        kind: 'rec', recId: r.id, date: abertas[0].iso, valor: r.valor,
+        desc: r.descricao || info.label, meta: `${info.label} · parcela ${abertas[0].num}/${r.parcelasTotal}`,
+      });
+    });
+  state.data.loans.map(normalizeLoan)
+    .filter(l => l.status !== 'paid' && l.calcMode === 'parcelado' && l.primeiraParcelaData && (l.numParcelas||0) - (l.parcelasPagasCount||0) === 1)
+    .forEach(l=>{
+      const { valorParcela } = computeLoanAmounts(l, new Date());
+      out.push({
+        kind: 'loan', loanId: l.id, date: toISO(midnight(addMonths(new Date(l.primeiraParcelaData+'T00:00:00'), l.numParcelas-1))),
+        valor: valorParcela, desc: l.borrower, meta: `Empréstimo · parcela ${l.numParcelas}/${l.numParcelas}`,
+      });
+    });
+  out.forEach(o=>{ o.dias = Math.round((midnight(new Date(o.date+'T00:00:00')) - hoje) / 86400000); });
+  out.sort((a,b)=> a.date < b.date ? -1 : 1);
+  return out;
+}
+function renderUltimasParcelas(){
+  const itens = buildUltimasParcelas();
+  if(itens.length === 0) return '';
+  const quando = d => d < 0 ? `atrasada há ${-d} dia${d===-1?'':'s'}` : d === 0 ? 'vence hoje' : d === 1 ? 'vence amanhã' : `vence em ${d} dias`;
+  return `
+    <div class="ultima-card">
+      <div class="ultima-title">🏁 Última parcela${itens.length>1?` · ${itens.length} finalizando`:''}</div>
+      ${itens.map(i=>`
+        <div class="ultima-row">
+          <div class="tx-info">
+            <div class="tx-desc">${escapeHtml(i.desc)}</div>
+            <div class="tx-meta">${escapeHtml(i.meta)} · ${new Date(i.date+'T00:00:00').toLocaleDateString('pt-BR')} · <span style="color:${i.dias<0?'var(--red)':i.dias<=3?'var(--gold)':'var(--dim)'}">${quando(i.dias)}</span></div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <div class="tx-amount" style="color:var(--green)">+ ${fmt(i.valor)}</div>
+            ${i.kind==='rec'
+              ? `<button class="small-btn" data-toggle-occ="${i.recId}" data-occ-date="${i.date}" data-occ-valor="${i.valor}" data-occ-received="false">Recebida</button>`
+              : `<button class="small-btn" data-registrar-parcela="${i.loanId}">Recebida</button>`}
+          </div>
+        </div>`).join('')}
+    </div>
+  `;
+}
 // calcula a janela de datas a olhar para um mês de referência da Previsão
 function previsaoRange(refDate){
   const hoje = midnight(new Date());
@@ -1006,6 +1198,7 @@ const state = {
   searchMotoristas: '',
   celCalc: null,        // form da calculadora de celulares (não persistido, só em memória)
   celParcelasPix: 3,
+  relSemanas: 8,         // horizonte da projeção semanal no Resumo
 };
 const norm = s => (s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 
@@ -1298,6 +1491,13 @@ function checkAndNotifyDueSoon(){
       itens.push(`Empréstimo · ${l.borrower} — ${status}`);
     }
   });
+  // última parcela de venda parcelada / empréstimo: avisa quando faltam até 3 dias (ou já atrasou)
+  try{
+    buildUltimasParcelas().filter(u => u.dias <= 3).forEach(u=>{
+      const status = u.dias < 0 ? 'atrasada' : u.dias === 0 ? 'vence hoje' : u.dias === 1 ? 'vence amanhã' : `vence em ${u.dias} dias`;
+      itens.push(`🏁 Última parcela · ${u.desc} — ${fmt(u.valor)} (${status})`);
+    });
+  }catch(e){ /* ignora se ainda não carregou */ }
   try{
     const pend = frotaPendingByVehicle();
     Object.keys(pend).forEach(vid=>{
@@ -1449,7 +1649,9 @@ function renderResumo(){
   const maiorCat = catEntries[0];
 
   return `
+    ${renderUltimasParcelas()}
     ${renderHojeWidget()}
+    ${renderWeeklyReport()}
     <div class="month-nav">
       <button class="icon-btn" id="prevMonth">‹</button>
       <div class="month-label">${monthLabel(refMonth)}</div>
@@ -2304,6 +2506,9 @@ function attachMainListeners(){
       const current = el.getAttribute('data-current') === 'true';
       updateRecurrence(id, { ativo: !current });
     };
+  });
+  document.querySelectorAll('[data-rel-semanas]').forEach(btn=>{
+    btn.onclick = () => { state.relSemanas = parseInt(btn.getAttribute('data-rel-semanas'), 10); render(); };
   });
   document.querySelectorAll('[data-toggle-occ]').forEach(el=>{
     el.onclick = () => {
